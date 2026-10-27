@@ -22,7 +22,7 @@ pub struct ManagedSaves {
 }
 
 impl ManagedSaves {
-    pub fn remember(&mut self, request: &str, snapshot: &Snapshot, app: &SheetApp) -> Result<(), String> {
+    pub fn remember(&mut self, request: &str, snapshot: &Snapshot, app: &SheetApp, revision: &str) -> Result<(), String> {
         let doc = app.session.active().ok_or_else(|| "No workbook is open.".to_string())?;
         if doc.uid.to_string() != snapshot.document || doc.revision.to_string() != snapshot.revision {
             return Err("The native snapshot no longer identifies the active document.".into());
@@ -30,7 +30,7 @@ impl ManagedSaves {
         self.pending = Some(Pending {
             request: request.to_string(),
             document: snapshot.document.clone(),
-            revision: snapshot.revision.clone(),
+            revision: revision.to_string(),
             workbook: doc.wb.clone(),
         });
         Ok(())
@@ -73,13 +73,13 @@ mod tests {
         let mut app = app();
         let mut saves = super::ManagedSaves::default();
         let first = crate::native_document::export(&mut app).unwrap();
-        saves.remember("request-1", &first, &app).unwrap();
+        saves.remember("request-1", &first, &app, &first.revision).unwrap();
         assert!(app.session.active().unwrap().is_dirty());
         app.run("cell.set", json!({"cell":"A1", "input":"second"})).unwrap();
         assert!(saves.acknowledge(&mut app, "request-1", &first.document, &first.revision));
         assert!(app.session.active().unwrap().is_dirty());
         let second = crate::native_document::export(&mut app).unwrap();
-        saves.remember("request-2", &second, &app).unwrap();
+        saves.remember("request-2", &second, &app, &second.revision).unwrap();
         assert!(saves.acknowledge(&mut app, "request-2", &second.document, &second.revision));
         assert!(!app.session.active().unwrap().is_dirty());
     }
@@ -89,10 +89,10 @@ mod tests {
         let mut app = app();
         let mut saves = super::ManagedSaves::default();
         let first = crate::native_document::export(&mut app).unwrap();
-        saves.remember("request-1", &first, &app).unwrap();
+        saves.remember("request-1", &first, &app, &first.revision).unwrap();
         app.run("cell.set", json!({"cell":"A1", "input":"second"})).unwrap();
         let second = crate::native_document::export(&mut app).unwrap();
-        saves.remember("request-2", &second, &app).unwrap();
+        saves.remember("request-2", &second, &app, &second.revision).unwrap();
         let baseline = app.session.active().unwrap().saved.clone();
         for (id, document, revision) in [
             ("request-1", first.document.as_str(), first.revision.as_str()),
@@ -113,7 +113,7 @@ mod tests {
         let mut app = app();
         let mut saves = super::ManagedSaves::default();
         let first = crate::native_document::export(&mut app).unwrap();
-        saves.remember("request-1", &first, &app).unwrap();
+        saves.remember("request-1", &first, &app, &first.revision).unwrap();
         app.session.new_workbook();
         app.run("cell.set", json!({"cell":"A1", "input":"new document"})).unwrap();
         let baseline = app.session.active().unwrap().saved.clone();

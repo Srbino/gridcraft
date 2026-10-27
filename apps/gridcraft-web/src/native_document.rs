@@ -1,4 +1,4 @@
-//! Whole native documents for same-origin embedding hosts.
+//! Whole native documents for opt-in embedding hosts.
 
 use gridcraft_ui_egui::SheetApp;
 use serde_json::json;
@@ -7,6 +7,30 @@ pub struct Snapshot {
     pub bytes: Vec<u8>,
     pub document: String,
     pub revision: String,
+}
+
+pub struct Opened {
+    pub document: String,
+    pub revision: String,
+}
+
+/// A correlated host import completes through the real UI/engine command before
+/// its identity is returned. Merely enqueueing bytes in the file-picker inbox
+/// cannot prove which document was opened.
+pub fn open(app: &mut SheetApp, name: &str, bytes: &[u8]) -> Result<Opened, String> {
+    // File commands settle drafts. Refuse before that boundary so an error or
+    // a replacement cannot silently commit or discard unacknowledged work.
+    if crate::draft_state::dirty(app) || app.editor.is_some() || app.text_box_editor.is_some() {
+        return Err("Save or discard unsaved work and finish native drafts before opening another workbook.".into());
+    }
+    let result = app.run("file.open", json!({"name":name,"base64":gridcraft_engine::io::base64_encode(bytes)}))?;
+    if let Some(warnings) = result.get("warnings").and_then(serde_json::Value::as_array)
+        && !warnings.is_empty()
+    {
+        return Err(warnings.iter().filter_map(serde_json::Value::as_str).collect::<Vec<_>>().join("\n"));
+    }
+    let doc = app.session.active().ok_or_else(|| "The engine did not open a workbook.".to_string())?;
+    Ok(Opened { document: doc.uid.to_string(), revision: doc.revision.to_string() })
 }
 
 /// Encode the complete native workbook through the same command as desktop/CLI.
@@ -25,8 +49,8 @@ pub fn export(app: &mut SheetApp) -> Result<Snapshot, String> {
     Ok(Snapshot { bytes, document: doc.uid.to_string(), revision: doc.revision.to_string() })
 }
 
-/// Limit the new host validation RPC before crossing the JS-to-Rust copy boundary.
-/// Native export and the legacy file-open path keep their existing behavior.
+/// Limit native RPC bytes before crossing the JS-to-Rust copy boundary.
+/// The private port also bounds file import/export; legacy window import stays unchanged.
 pub fn validate_length(length: usize) -> Result<(), String> {
     if length > 32 * 1024 * 1024 {
         return Err("Native validation accepts at most 32 MiB.".into());
@@ -56,6 +80,81 @@ mod tests {
         let mut session = Session::new();
         session.new_workbook();
         SheetApp::new(session, Services::default())
+    }
+
+    #[test]
+    fn correlated_open_identity_belongs_to_the_import_not_a_later_file_new() {
+        let mut app = app();
+        let mut source = Session::new();
+        source.new_workbook();
+        source.execute("cell.set", json!({"cell":"A1","input":"import A"})).unwrap();
+        let encoded = source.execute("file.saveBytes", json!({"format":"json"})).unwrap();
+        let bytes = gridcraft_engine::io::base64_decode(encoded["base64"].as_str().unwrap()).unwrap();
+        let opened = super::open(&mut app, "owned.json", &bytes).unwrap();
+        assert_eq!(opened.document, app.session.active().unwrap().uid.to_string());
+        assert_eq!(opened.revision, app.session.active().unwrap().revision.to_string());
+        assert_eq!(app.run("cell.get", json!({"cell":"A1"})).unwrap()["value"], "import A");
+        app.run("file.new", json!({})).unwrap();
+        assert_ne!(opened.document, app.session.active().unwrap().uid.to_string());
+        let before = app.session.active().unwrap().uid;
+        assert!(super::open(&mut app, "invalid.json", b"invalid JSON").is_err());
+        assert_eq!(before, app.session.active().unwrap().uid);
+    }
+
+    fn imported_bytes(value: &str) -> Vec<u8> {
+        let mut source = Session::new();
+        source.new_workbook();
+        source.execute("cell.set", json!({"cell":"A1","input":value})).unwrap();
+        let encoded = source.execute("file.saveBytes", json!({"format":"json"})).unwrap();
+        gridcraft_engine::io::base64_decode(encoded["base64"].as_str().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn same_import_name_with_new_bytes_opens_a_new_actual_document() {
+        let mut app = app();
+        let first = super::open(&mut app, "owned.json", &imported_bytes("import A")).unwrap();
+        let second = super::open(&mut app, "owned.json", &imported_bytes("import B")).unwrap();
+        assert_ne!(first.document, second.document);
+        assert_eq!(second.document, app.session.active().unwrap().uid.to_string());
+        assert_eq!(app.run("cell.get", json!({"cell":"A1"})).unwrap()["value"], "import B");
+    }
+
+    #[test]
+    fn owned_import_refuses_dirty_work_without_replacing_or_settling_it() {
+        let mut app = app();
+        app.run("cell.set", json!({"cell":"A1","input":"unsaved"})).unwrap();
+        let before = app.session.active().unwrap().wb.clone();
+        let uid = app.session.active().unwrap().uid;
+        assert!(super::open(&mut app, "owned.json", &imported_bytes("replacement")).is_err());
+        assert_eq!(uid, app.session.active().unwrap().uid);
+        assert!(std::sync::Arc::ptr_eq(&before, &app.session.active().unwrap().wb));
+        assert!(crate::draft_state::dirty(&app));
+    }
+
+    #[test]
+    fn owned_import_error_retains_pending_cell_without_committing_it() {
+        let mut app = app();
+        let before = app.session.active().unwrap().wb.clone();
+        app.begin_edit(Some("pending cell".into()), false);
+        assert!(super::open(&mut app, "invalid.json", b"invalid JSON").is_err());
+        assert_eq!(app.editor.as_ref().unwrap().text, "pending cell");
+        assert!(std::sync::Arc::ptr_eq(&before, &app.session.active().unwrap().wb));
+        assert!(crate::draft_state::dirty(&app));
+    }
+
+    #[test]
+    fn owned_import_refuses_pending_text_box_without_committing_it() {
+        let mut app = app();
+        let id = app.run("insert.textBox", json!({"at":"B2","text":"original"})).unwrap()["shape"].as_u64().unwrap() as u32;
+        let doc = app.session.active_mut().unwrap();
+        doc.saved = doc.wb.clone();
+        let before = doc.wb.clone();
+        assert!(app.begin_text_box_edit(id));
+        app.text_box_editor.as_mut().unwrap().text = "pending text box".into();
+        assert!(super::open(&mut app, "owned.json", &imported_bytes("replacement")).is_err());
+        assert_eq!(app.text_box_editor.as_ref().unwrap().text, "pending text box");
+        assert!(std::sync::Arc::ptr_eq(&before, &app.session.active().unwrap().wb));
+        assert!(crate::draft_state::dirty(&app));
     }
 
     #[test]
