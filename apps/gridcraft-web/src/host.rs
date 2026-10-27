@@ -18,6 +18,12 @@
 //! - `gridcraft:validate-native` (from the parent): `{ requestId, bytes }`; replies with
 //!   `gridcraft:native-validated` `{ requestId, valid, error? }` without changing the document.
 //!
+//! - `gridcraft:closed` (to the parent): no workbook is active.
+//! - With `?host=parent&save=managed`, workbook Save emits `gridcraft:save-request`
+//!   `{ document, revision }` without marking it saved. After durable storage of the latest
+//!   native export, send `gridcraft:save-ack` `{ requestId, document, revision }`.
+//!   Only that exact exported workbook becomes the saved baseline; later edits remain dirty.
+//!
 //! Only the parent window on the page's own origin is heard or answered. In host mode the page
 //! starts with an empty workbook instead of a sample, and the parent guards leaving the page.
 
@@ -39,10 +45,14 @@ const MAX_AUTHOR_CHARS: usize = 200;
 enum NativeRequest {
     Export(String),
     Validate(String, Vec<u8>),
+    RequestSave,
+    Acknowledge(String, String, String),
 }
 
 #[derive(Clone)]
 pub struct Bridge {
+    managed: bool,
+    managed_saves: Rc<RefCell<crate::managed_save::ManagedSaves>>,
     window: web_sys::Window,
     parent: web_sys::Window,
     origin: String,
@@ -56,14 +66,24 @@ pub struct Bridge {
 
 impl Bridge {
     /// `None` when the page isn't framed (there is no parent to talk to).
-    pub fn new() -> Option<Self> {
+    pub fn new(managed: bool) -> Option<Self> {
         let window = web_sys::window()?;
         let parent = window.parent().ok().flatten()?;
         if js_sys::Object::is(&parent, &window) {
             return None;
         }
         let origin = window.location().origin().ok()?;
-        Some(Self { window, parent, origin, saved: Rc::default(), reported: Rc::default(), native: Rc::default(), reported_revision: Rc::default() })
+        Some(Self {
+            managed,
+            managed_saves: Rc::default(),
+            window,
+            parent,
+            origin,
+            saved: Rc::default(),
+            reported: Rc::default(),
+            native: Rc::default(),
+            reported_revision: Rc::default(),
+        })
     }
 
     /// Send saved and exported files to the parent instead of downloading them, and hear files
@@ -102,6 +122,16 @@ impl Bridge {
             match request {
                 NativeRequest::Export(id) => match crate::native_document::export(app) {
                     Ok(snapshot) => {
+                        if self.managed
+                            && let Err(error) = self.managed_saves.borrow_mut().remember(&id, &snapshot, app)
+                        {
+                            self.send(&[
+                                ("type", "gridcraft:native-exported".into()),
+                                ("requestId", id.as_str().into()),
+                                ("error", error.as_str().into()),
+                            ]);
+                            continue;
+                        }
                         let buffer = js_sys::Uint8Array::from(snapshot.bytes.as_slice()).buffer();
                         if let Some(message) = message(&[
                             ("type", "gridcraft:native-exported".into()),
@@ -121,6 +151,18 @@ impl Bridge {
                         ]);
                     }
                 },
+                NativeRequest::RequestSave => {
+                    if let Some(doc) = app.session.active() {
+                        self.send(&[
+                            ("type", "gridcraft:save-request".into()),
+                            ("document", doc.uid.to_string().into()),
+                            ("revision", doc.revision.to_string().into()),
+                        ]);
+                    }
+                }
+                NativeRequest::Acknowledge(id, document, revision) => {
+                    self.managed_saves.borrow_mut().acknowledge(app, &id, &document, &revision);
+                }
                 NativeRequest::Validate(id, bytes) => {
                     let result = crate::native_document::validate(&bytes);
                     let error = result.as_ref().err().map(String::as_str).unwrap_or("");
@@ -155,6 +197,8 @@ impl Bridge {
                     ("revision", revision.to_string().into()),
                     ("dirty", dirty.into()),
                 ]);
+            } else {
+                self.send(&[("type", "gridcraft:closed".into())]);
             }
             self.reported_revision.set(revision);
         }
@@ -162,6 +206,13 @@ impl Bridge {
 
     fn post_save(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
         let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+        if self.managed && is_workbook(&name) {
+            if self.native.borrow().len() >= 8 {
+                return Err("The native document request queue is full.".into());
+            }
+            self.native.borrow_mut().push(NativeRequest::RequestSave);
+            return Ok(());
+        }
         let buffer = js_sys::Uint8Array::from(bytes).buffer();
         let message = message(&[("type", "gridcraft:save".into()), ("name", name.as_str().into()), ("bytes", buffer.clone().into())])
             .ok_or_else(|| "couldn't build the message".to_string())?;
@@ -182,6 +233,16 @@ impl Bridge {
             }
             let data = event.data();
             let kind = string(&data, "type");
+            if kind.as_deref() == Some("gridcraft:save-ack") {
+                if !bridge.managed || bridge.native.borrow().len() >= 8 {
+                    return;
+                }
+                let field = |key| string(&data, key).filter(|value| !value.is_empty() && value.len() <= 128);
+                let (Some(id), Some(document), Some(revision)) = (field("requestId"), field("document"), field("revision")) else { return };
+                bridge.native.borrow_mut().push(NativeRequest::Acknowledge(id, document, revision));
+                ctx.request_repaint();
+                return;
+            }
             if matches!(kind.as_deref(), Some("gridcraft:export-native" | "gridcraft:validate-native")) {
                 let Some(id) = string(&data, "requestId").filter(|id| !id.is_empty() && id.len() <= 128) else { return };
                 let response =
@@ -197,16 +258,19 @@ impl Bridge {
                 }
                 let request = if kind.as_deref() == Some("gridcraft:export-native") {
                     NativeRequest::Export(id)
-                } else if let Some(bytes) = bytes(&data) {
-                    NativeRequest::Validate(id, bytes)
                 } else {
-                    bridge.send(&[
-                        ("type", response.into()),
-                        ("requestId", id.as_str().into()),
-                        ("valid", false.into()),
-                        ("error", "Native workbook bytes are required.".into()),
-                    ]);
-                    return;
+                    match native_bytes(&data) {
+                        Ok(bytes) => NativeRequest::Validate(id, bytes),
+                        Err(error) => {
+                            bridge.send(&[
+                                ("type", response.into()),
+                                ("requestId", id.as_str().into()),
+                                ("valid", false.into()),
+                                ("error", error.as_str().into()),
+                            ]);
+                            return;
+                        }
+                    }
                 };
                 bridge.native.borrow_mut().push(request);
                 ctx.request_repaint();
@@ -258,4 +322,18 @@ fn bytes(data: &JsValue) -> Option<Vec<u8>> {
     } else {
         None
     }
+}
+
+/// The validation RPC checks size before allocating or copying the incoming payload.
+fn native_bytes(data: &JsValue) -> Result<Vec<u8>, String> {
+    let value = js_sys::Reflect::get(data, &JsValue::from_str("bytes")).map_err(|_| "Native workbook bytes are required.".to_string())?;
+    let array = if let Some(array) = value.dyn_ref::<js_sys::Uint8Array>() {
+        array.clone()
+    } else if value.is_instance_of::<js_sys::ArrayBuffer>() {
+        js_sys::Uint8Array::new(&value)
+    } else {
+        return Err("Native workbook bytes are required.".into());
+    };
+    crate::native_document::validate_length(array.length() as usize)?;
+    Ok(array.to_vec())
 }

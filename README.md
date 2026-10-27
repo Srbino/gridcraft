@@ -138,8 +138,19 @@ through the engine and leaves the unsaved state intact: the host remains respons
 storage. `gridcraft:changed` reports every active document revision, including further edits while
 already dirty. `gridcraft:validate-native` (`requestId`, `bytes`) returns
 `gridcraft:native-validated` (`requestId`, `valid`, `error`) without changing the document.
+Validation accepts at most 32 MiB, checked before copying the input bytes. `gridcraft:closed`
+reports that no workbook is active.
 These messages are accepted only from the same-origin parent. They do not grant permission to
 store a document or turn the ordinary XLSX Save action into a durable acknowledgement.
+
+Hosts that durably store native snapshots can opt into `?host=parent&save=managed`.
+Workbook Save (including Ctrl+S) then sends `gridcraft:save-request` (`document`, `revision`)
+and leaves unsaved changes intact. Export a native snapshot using a fresh `requestId` unique
+across frame reloads. After storing it durably, send `gridcraft:save-ack` with that exact
+`requestId`, `document`, and `revision` from `gridcraft:native-exported`. Only the latest
+export can be acknowledged. A matching acknowledgement records the exported workbook as the
+saved baseline; edits made after that export remain unsaved. Old or foreign acknowledgements
+are ignored. Without `save=managed`, ordinary XLSX Save behavior remains unchanged.
 
 ### Ribbon access keys
 

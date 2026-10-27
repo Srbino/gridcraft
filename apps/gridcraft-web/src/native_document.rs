@@ -25,6 +25,15 @@ pub fn export(app: &mut SheetApp) -> Result<Snapshot, String> {
     Ok(Snapshot { bytes, document: doc.uid.to_string(), revision: doc.revision.to_string() })
 }
 
+/// Limit the new host validation RPC before crossing the JS-to-Rust copy boundary.
+/// Native export and the legacy file-open path keep their existing behavior.
+pub fn validate_length(length: usize) -> Result<(), String> {
+    if length > 32 * 1024 * 1024 {
+        return Err("Native validation accepts at most 32 MiB.".into());
+    }
+    Ok(())
+}
+
 /// Decode using the application's engine without changing the open workbook.
 pub fn validate(bytes: &[u8]) -> Result<(), String> {
     // The file reader also sniffs XLSX irrespective of the supplied extension.
@@ -77,6 +86,13 @@ mod tests {
         assert_eq!(serde_json::to_value(&wb).unwrap(), serde_json::to_value(app.session.active().unwrap().wb.as_ref()).unwrap());
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(json.get("sheets").is_some());
+    }
+
+    #[test]
+    fn native_validation_length_boundary_is_checked_without_allocating_payloads() {
+        assert!(super::validate_length(31 * 1024 * 1024).is_ok());
+        assert!(super::validate_length(32 * 1024 * 1024).is_ok());
+        assert!(super::validate_length(32 * 1024 * 1024 + 1).is_err());
     }
 
     #[test]
