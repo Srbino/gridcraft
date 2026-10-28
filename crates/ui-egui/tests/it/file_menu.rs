@@ -756,3 +756,20 @@ fn managed_file_tab_save_requests_native_storage_instead_of_opening_save_as() {
     assert!(Arc::ptr_eq(&baseline, &h.state().session.active().unwrap().saved), "requesting Save never acknowledges storage");
     assert!(h.state().session.active().unwrap().is_dirty());
 }
+
+#[test]
+fn managed_file_info_does_not_infer_unsaved_state_from_absent_desktop_path() {
+    let mut h = harness(Services::default());
+    choose(&mut h, "Info");
+    assert!(h.query_all_by_label("Not saved yet").count() >= 2, "legacy path-none calibration");
+    h.state_mut().session.active_mut().unwrap().path = Some("/tmp/legacy-workbook.xlsx".into());
+    h.run_steps(3);
+    assert!(h.query_all_by_label("/tmp/legacy-workbook.xlsx").count() >= 2, "legacy filesystem location remains visible");
+    h.state_mut().session.active_mut().unwrap().path = None;
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("Not saved yet").count(), 0, "host storage is unrelated to an optional desktop path");
+    assert_eq!(h.query_all_by_label("Managed by host").count(), 2);
+    assert!(h.query_by_label("Properties").is_some());
+    assert!(h.query_by_label("Title").is_some());
+}

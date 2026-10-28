@@ -612,6 +612,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     };
     let title = d.display_title();
     let path = d.path.clone();
+    let location = if app.session.is_managed_document() { lang.tr("Managed by host") } else { path.as_deref().unwrap_or(lang.tr("Not saved yet")) };
     let sheets = d.wb.sheets.len();
     let protected = d.wb.protected_structure;
     let current: Vec<String> = {
@@ -623,10 +624,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.add_space(38.0);
         ui.vertical(|ui| {
             ui.label(RichText::new(&title).font(theme::ui_bold(16.0)).color(t.text));
-            match &path {
-                Some(p) => dim(ui, p),
-                None => dim(ui, lang.tr("Not saved yet")),
-            }
+            dim(ui, location);
         });
     });
     ui.add_space(18.0);
@@ -650,7 +648,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     section(ui, lang, "Properties");
     egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
         ui.label(RichText::new(lang.tr("Location")).color(t.text_dim));
-        ui.label(path.as_deref().unwrap_or(lang.tr("Not saved yet")));
+        ui.label(location);
         ui.end_row();
         ui.label(RichText::new(lang.tr("Sheets")).color(t.text_dim));
         ui.label(sheets.to_string());
