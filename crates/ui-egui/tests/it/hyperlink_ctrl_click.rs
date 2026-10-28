@@ -95,3 +95,36 @@ fn ctrl_alt_click_on_the_link_text_still_extends_the_selection() {
     assert_eq!(d.selection.active.a1(), "B4", "the link was not followed");
     assert!(h.state().dialog.is_none(), "no link dialog");
 }
+
+#[test]
+fn managed_external_link_click_is_not_offered_but_internal_navigation_and_data_remain() {
+    let mut h = harness();
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    let before = h.state().session.active().unwrap().wb.clone();
+    click(&mut h, "B2", Modifiers::COMMAND);
+    assert!(h.state().dialog.is_none(), "managed external link must not offer a blocked Open button");
+    assert!(h.state().message.as_ref().is_some_and(|(_, text)| text.contains("External links")));
+    h.state_mut().message = None;
+    h.run_steps(3);
+    click(&mut h, "B4", Modifiers::COMMAND);
+    assert_eq!(h.state().session.active().unwrap().selection.active.a1(), "F9");
+    assert!(std::sync::Arc::ptr_eq(&before, &h.state().session.active().unwrap().wb), "links and workbook content stay unchanged");
+    assert_eq!(h.state().session.active().unwrap().wb.active().unwrap().hyperlinks[&CellRef::parse("B2").unwrap()].target, "https://example.org/a");
+}
+
+#[test]
+fn managed_external_link_command_refuses_without_claiming_to_open_or_calling_host() {
+    let mut h = harness();
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let capture = opened.clone();
+    h.state_mut().services.open_url = Some(Box::new(move |_| {
+        capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    h.state_mut().run("link.open", json!({"url":"https://example.org/a"})).unwrap();
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 1, "standalone host service remains usable");
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    assert!(h.state_mut().run("link.open", json!({"url":"https://example.org/a"})).is_err());
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 1, "managed host must not receive an impossible popup request");
+    h.state_mut().run("link.open", json!({"url":"Sheet1!F9"})).unwrap();
+    assert_eq!(h.state().session.active().unwrap().selection.active.a1(), "F9");
+}

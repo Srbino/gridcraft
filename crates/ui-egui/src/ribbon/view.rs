@@ -70,10 +70,12 @@ pub(super) fn view(app: &mut SheetApp, ui: &mut Ui) {
         act(app, "view.zoomToSelection", json!({"viewWidth": r.width(), "viewHeight": r.height()}));
     }
     sep(ui);
-    let __k = big_button(ui, Icon::NewFile, "New\nWindow", "New Window", false);
-    control_keytip(app, ui, &__k, "view.newWindow");
-    if __k.clicked() {
-        act(app, "view.newWindow", json!({}));
+    if app.show_command("view.newWindow") {
+        let __k = big_button(ui, Icon::NewFile, "New\nWindow", "New Window", false);
+        control_keytip(app, ui, &__k, "view.newWindow");
+        if __k.clicked() {
+            act(app, "view.newWindow", json!({}));
+        }
     }
     let __k = big_button(ui, Icon::Table, "Arrange\nAll", "Arrange All", false);
     control_keytip(app, ui, &__k, "view.arrangeAll");

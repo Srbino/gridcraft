@@ -33,11 +33,6 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
         m.set_focus_lock_filter(resp.id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
     });
     let events = ctx.input(|i| i.events.clone());
-    // A shortcut key that also types a character (Shift+Space sends Text(" ")) must not start an edit.
-    let shortcut_pressed = events.iter().any(|e| {
-        matches!(e, egui::Event::Key { pressed: true, modifiers: m, key, .. }
-            if !m.alt && (m.ctrl || m.command || (m.shift && *key == egui::Key::Space)))
-    });
     let page = ((geo.cells.height() / geo.z) / sh.default_row_height).floor().max(1.0) as i64;
     // Alt shortcuts type their character too on Windows and Linux (Alt+= sends Text("=")): once
     // a shortcut ran, that text must not start an edit over what it just did.
@@ -59,8 +54,12 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             // PRIMARY middle-click paste belongs to egui's TextEdit; the grid has no caret to
             // insert text at, so a middle click on a cell is deliberately not a paste.
             egui::Event::MiddleClickPaste { .. } => {}
-            egui::Event::Text(_) if shortcut_pressed || shortcut_ran => {}
+            egui::Event::Text(_) if shortcut_ran => {}
             egui::Event::Text(text) if text.chars().all(|c| !c.is_control()) && !text.is_empty() => {
+                // A slow frame can contain several character events before the
+                // new TextEdit has focus. Seed the complete text burst once and
+                // consume its prefix; leave later editing/control events intact.
+                let text = take_initial_text(ctx, text);
                 app.begin_edit(Some(text), false);
                 if let Some(ed) = app.editor.as_mut() {
                     ed.caret = ed.text.chars().count();
@@ -72,6 +71,11 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                 if crate::keymap::dispatch(app, ctx, key, physical_key, m, geo, sh) {
                     shortcut_ran = true;
                     continue;
+                }
+                // Only a shortcut already reached in event order can own following
+                // text. A later Ctrl+S must not discard earlier typed content.
+                if !m.alt && (m.ctrl || m.command || (m.shift && key == Key::Space)) {
+                    shortcut_ran = true;
                 }
                 let cmd = m.command;
                 let shift = m.shift;
@@ -152,4 +156,53 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             _ => {}
         }
     }
+}
+
+/// Transfer the initial character burst from grid navigation to the new editor.
+fn take_initial_text(ctx: &egui::Context, first: String) -> String {
+    ctx.input_mut(|input| {
+        let Some(start) = input.events.iter().position(|event| matches!(event, egui::Event::Text(text) if *text == first)) else {
+            return first;
+        };
+        let mut text = String::new();
+        let mut end = start;
+        for (index, event) in input.events.iter().enumerate().skip(start) {
+            match event {
+                egui::Event::Text(part) if part.chars().all(|ch| !ch.is_control()) => text.push_str(part),
+                egui::Event::Key { pressed: false, .. } => {}
+                egui::Event::Key { key, modifiers, .. } if !modifiers.ctrl && !modifiers.command && !modifiers.alt && typing_key(*key) => {}
+                _ => break,
+            }
+            end = index + 1;
+        }
+        input.events.drain(..end);
+        text
+    })
+}
+
+fn typing_key(key: egui::Key) -> bool {
+    use egui::Key;
+    key.name().chars().count() == 1
+        || matches!(
+            key,
+            Key::Space
+                | Key::Colon
+                | Key::Comma
+                | Key::Minus
+                | Key::Period
+                | Key::Plus
+                | Key::Equals
+                | Key::Semicolon
+                | Key::Backslash
+                | Key::Slash
+                | Key::Pipe
+                | Key::Questionmark
+                | Key::Exclamationmark
+                | Key::OpenBracket
+                | Key::CloseBracket
+                | Key::OpenCurlyBracket
+                | Key::CloseCurlyBracket
+                | Key::Backtick
+                | Key::Quote
+        )
 }

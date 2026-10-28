@@ -647,3 +647,241 @@ fn control_requests_route_to_a_window_and_list_windows() {
     let r = call(&mut h, "engine.execute", serde_json::json!({"command": "cell.get", "params": {"cell": "A1"}, "window": 999}));
     assert_eq!(r["ok"], false, "{r}");
 }
+
+#[test]
+fn managed_print_preview_uses_a_pdf_copy_when_no_native_print_service_exists() {
+    let downloads = Arc::new(Mutex::new(Vec::<(String, Vec<u8>)>::new()));
+    let copy = downloads.clone();
+    let mut h = harness(Services {
+        download: Some(Box::new(move |name, bytes| copy.lock().unwrap().push((name.into(), bytes.to_vec())))),
+        ..Default::default()
+    });
+    h.state_mut().run("cell.set", serde_json::json!({"cell":"A1","input":"print copy"})).unwrap();
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    let baseline = h.state().session.active().unwrap().saved.clone();
+    h.state_mut().open_backstage(gridcraft_ui_egui::backstage::Page::Print);
+    h.run_steps(3);
+    assert!(h.query_by_label("Create PDF").is_some(), "unsupported OS print is replaced by an actionable PDF copy");
+    h.get_by_label("Create PDF").click();
+    h.run_steps(3);
+    let files = downloads.lock().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].0.ends_with(".pdf"));
+    assert!(files[0].1.starts_with(b"%PDF-"));
+    assert!(Arc::ptr_eq(&h.state().session.active().unwrap().saved, &baseline));
+    assert!(h.state().session.active().unwrap().is_dirty());
+}
+
+#[test]
+fn managed_ctrl_p_opens_print_preview_instead_of_calling_missing_os_print() {
+    let mut h = harness(Services::default());
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::P,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    h.run_steps(3);
+    assert_eq!(page(&h), Some("print"));
+    assert!(h.state().message.is_none());
+}
+
+#[test]
+fn managed_automate_hides_host_unavailable_update_and_desktop_agent_help() {
+    let mut h = harness(Services::default());
+    h.state_mut().ui.ribbon_tab = "Automate".into();
+    h.run_steps(3);
+    let painted = |h: &egui_kittest::Harness<'static, SheetApp>, label: &str| {
+        h.output().shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label))
+    };
+    for label in ["Check for", "Agent"] {
+        assert!(painted(&h, label), "standalone calibration: {label}");
+    }
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    for label in ["Check for", "Agent"] {
+        assert!(!painted(&h, label), "managed host cannot provide {label}");
+    }
+    for label in ["Command", "Action", "About"] {
+        assert!(painted(&h, label), "real UI remains available: {label}");
+    }
+}
+
+#[test]
+fn managed_about_keeps_information_without_unusable_external_links() {
+    let mut h = harness(Services { open_url: Some(Box::new(|_| {})), ..Default::default() });
+    h.state_mut().open_dialog("about", serde_json::json!({}));
+    h.run_steps(3);
+    let label = "getartcraft.com/apps/gridcraft";
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::Link, label).is_some(), "standalone link calibration");
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::Link, label).is_none(), "opaque host has no external URL capability");
+    assert!(h.query_by_label("GridCraft").is_some(), "product information remains");
+    assert!(h.query_by_label("Contributors").is_some());
+    assert!(h.query_by_label("Models").is_some());
+}
+
+#[test]
+fn managed_options_do_not_offer_desktop_xlsx_autosave() {
+    let mut h = harness(Services::default());
+    h.state_mut().run("file.options", serde_json::json!({})).unwrap();
+    h.run_steps(3);
+    let label = "Save .xlsx workbooks automatically after every change";
+    assert!(h.query_by_label(label).is_some(), "standalone positive calibration");
+    assert!(h.state().session.active().unwrap().path.is_none());
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert!(h.query_by_label(label).is_none(), "the host owns native storage; this desktop xlsx option cannot work");
+    assert!(h.query_by_label("Enable AutoComplete for cell values").is_some(), "functional editing options remain");
+}
+
+#[test]
+fn managed_file_tab_save_requests_native_storage_instead_of_opening_save_as() {
+    let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let capture = requested.clone();
+    let mut h = harness(Services::default());
+    h.state_mut().set_managed_document_save(Some(Box::new(move || {
+        capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    })));
+    h.state_mut().run("cell.set", serde_json::json!({"cell":"A1","input":"native file save"})).unwrap();
+    assert!(h.state().session.active().unwrap().path.is_none());
+    let baseline = h.state().session.active().unwrap().saved.clone();
+    choose(&mut h, "Save");
+    assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), 1, "File Save uses the same native storage request as Ctrl+S");
+    assert!(h.state().backstage.is_none());
+    assert!(Arc::ptr_eq(&baseline, &h.state().session.active().unwrap().saved), "requesting Save never acknowledges storage");
+    assert!(h.state().session.active().unwrap().is_dirty());
+}
+
+#[test]
+fn managed_file_info_does_not_infer_unsaved_state_from_absent_desktop_path() {
+    let mut h = harness(Services::default());
+    choose(&mut h, "Info");
+    assert!(h.query_all_by_label("Not saved yet").count() >= 2, "legacy path-none calibration");
+    h.state_mut().session.active_mut().unwrap().path = Some("/tmp/legacy-workbook.xlsx".into());
+    h.run_steps(3);
+    assert!(h.query_all_by_label("/tmp/legacy-workbook.xlsx").count() >= 2, "legacy filesystem location remains visible");
+    h.state_mut().session.active_mut().unwrap().path = None;
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label("Not saved yet").count(), 0, "host storage is unrelated to an optional desktop path");
+    assert_eq!(h.query_all_by_label("Managed by host").count(), 2);
+    assert!(h.query_by_label("Properties").is_some());
+    assert!(h.query_by_label("Title").is_some());
+}
+
+#[test]
+fn managed_raw_text_before_save_shortcut_keeps_all_typed_content() {
+    for warm in [false, true] {
+        for split in [false, true] {
+            let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let capture = requested.clone();
+            let mut h = harness(Services::default());
+            h.state_mut().set_managed_document_save(Some(Box::new(move || {
+                capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })));
+            let baseline = h.state().session.active().unwrap().saved.clone();
+            if warm {
+                h.input_mut().events.push(egui::Event::Text("P".into()));
+                h.run_steps(2);
+                assert_eq!(h.state().cell_draft().unwrap().text, "P");
+            }
+            let tail = if warm { "REFIX" } else { "PREFIX" };
+            if split {
+                h.input_mut().events.extend(tail.chars().map(|ch| egui::Event::Text(ch.to_string())));
+            } else {
+                h.input_mut().events.push(egui::Event::Text(tail.into()));
+            }
+            h.input_mut().events.extend([
+                egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: Some(egui::Key::S),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+            ]);
+            h.run_steps(2);
+            let doc = h.state().session.active().unwrap();
+            assert_eq!(
+                doc.wb.active().unwrap().value(CellRef::new(0, 0)),
+                Value::text("PREFIX"),
+                "warm={warm}, split={split}, requests={}, draft={:?}",
+                requested.load(std::sync::atomic::Ordering::SeqCst),
+                h.state().cell_draft()
+            );
+            assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(h.state().cell_draft().is_none());
+            assert!(Arc::ptr_eq(&baseline, &doc.saved), "request is not a durable ACK");
+        }
+    }
+}
+
+#[test]
+fn managed_raw_save_shortcut_preserves_refused_and_readonly_drafts() {
+    for readonly in [false, true] {
+        let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let capture = requested.clone();
+        let mut h = harness(Services::default());
+        h.state_mut().set_managed_document_save(Some(Box::new(move || {
+            capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })));
+        let text = if readonly { "retained readonly draft" } else { "=1+" };
+        h.state_mut().begin_edit(Some(text.into()), false);
+        h.run_steps(2);
+        if readonly {
+            h.state_mut().set_read_only(true);
+        }
+        let before = h.state().session.active().unwrap().wb.clone();
+        let saved = h.state().session.active().unwrap().saved.clone();
+        h.input_mut().events.extend([
+            egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+            egui::Event::Key {
+                key: egui::Key::S,
+                physical_key: Some(egui::Key::S),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+        ]);
+        h.run_steps(2);
+        assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), 0, "readonly={readonly}");
+        assert_eq!(h.state().cell_draft().unwrap().text, text);
+        assert!(Arc::ptr_eq(&before, &h.state().session.active().unwrap().wb));
+        assert!(Arc::ptr_eq(&saved, &h.state().session.active().unwrap().saved));
+        assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(0, 0));
+        assert!(h.state().message.is_some());
+    }
+}
+
+#[test]
+fn managed_raw_shortcuts_do_not_insert_their_following_text() {
+    for (key, modifiers, text) in [(egui::Key::S, egui::Modifiers::COMMAND, "s"), (egui::Key::Space, egui::Modifiers::SHIFT, " ")] {
+        let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let capture = requested.clone();
+        let mut h = harness(Services::default());
+        h.state_mut().set_managed_document_save(Some(Box::new(move || {
+            capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })));
+        h.input_mut().events.extend([
+            egui::Event::ModifiersChanged(modifiers),
+            egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers },
+            egui::Event::Text(text.into()),
+        ]);
+        h.run_steps(2);
+        assert!(h.state().cell_draft().is_none(), "{key:?}");
+        assert_eq!(h.state().session.active().unwrap().wb.active().unwrap().value(CellRef::new(0, 0)), Value::Empty);
+        assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), usize::from(key == egui::Key::S));
+        if key == egui::Key::Space {
+            assert!(h.state().session.active().unwrap().selection.current().is_full_rows());
+        }
+    }
+}

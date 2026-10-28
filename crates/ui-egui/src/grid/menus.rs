@@ -166,6 +166,9 @@ pub(super) fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
             }
             let lang = crate::i18n::current(ui.ctx());
             for (label, id) in items {
+                if !app.show_command(id) {
+                    continue;
+                }
                 if label == "-" {
                     ui.separator();
                     continue;
@@ -508,6 +511,9 @@ pub(super) fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool)
             }
             let lang = crate::i18n::current(ui.ctx());
             for (label, id) in items {
+                if !app.show_command(id) {
+                    continue;
+                }
                 if label == "-" {
                     ui.separator();
                     continue;

@@ -482,3 +482,59 @@ fn the_cut_text_pastes_again_once_the_clipboard_has_held_other_text() {
     h.run_steps(2);
     assert_eq!(value_at(&h, "H1"), Some(Value::from("Name")), "the same text copied afresh pastes");
 }
+
+#[test]
+fn managed_embedding_keeps_os_paste_events_without_unsupported_clipboard_read_buttons() {
+    let mut h = harness(Services::default());
+    // Standalone keeps its established internal/host clipboard controls.
+    assert!(h.query_by_label("Paste").is_some());
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(2);
+    assert!(h.query_by_label("Paste").is_none(), "the native opaque host cannot read a changed OS clipboard for this button");
+    h.state_mut().run("selection.set", json!({"cell":"D4"})).unwrap();
+    h.input_mut().events.push(Event::Paste("external user paste".into()));
+    h.run_steps(2);
+    assert_eq!(value_at(&h, "D4"), Some(Value::from("external user paste")));
+    h.state_mut().grid.context_menu = Some(egui::pos2(300.0, 300.0));
+    h.run_steps(2);
+    assert!(h.query_by_label("Paste").is_none());
+    assert!(h.query_by_label("Paste Special…").is_none());
+    h.state_mut().grid.context_menu = None;
+    h.state_mut().grid.header_menu = Some((egui::pos2(300.0, 300.0), true));
+    h.run_steps(2);
+    assert!(h.query_by_label("Paste").is_none());
+}
+
+#[test]
+fn managed_host_with_a_real_clipboard_read_service_keeps_paste_controls() {
+    let (_, services) = system_clipboard("host clipboard text");
+    let mut h = harness(services);
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Paste").click();
+    h.run_steps(2);
+    assert_eq!(value_at(&h, "A1"), Some(Value::from("host clipboard text")));
+}
+
+#[test]
+fn managed_command_search_does_not_offer_unsupported_paste_or_host_lifecycle_actions() {
+    fn offered(h: &mut Harness, id: &str) -> bool {
+        let info = h.state().session.commands().into_iter().find(|c| c.id == id).unwrap();
+        let label = format!("{}    {}", info.label, info.menu.join(" › "));
+        h.state_mut().dialog = None;
+        h.state_mut().open_dialog("commandSearch", json!({}));
+        h.state_mut().dialog.as_mut().unwrap().search = id.into();
+        h.run_steps(3);
+        h.query_by_label(&label).is_some()
+    }
+    let mut h = harness(Services::default());
+    h.state_mut().run("edit.copy", json!({})).unwrap();
+    for id in ["edit.paste", "edit.pasteSpecial", "file.new", "file.close", "window.close", "view.newWindow"] {
+        assert!(offered(&mut h, id), "standalone offers {id}");
+    }
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    for id in ["edit.paste", "edit.pasteSpecial", "file.new", "file.close", "window.close", "view.newWindow"] {
+        assert!(!offered(&mut h, id), "managed search must not offer {id}");
+    }
+    assert!(h.state().session.commands().into_iter().any(|c| c.id == "edit.paste"), "engine introspection remains intact");
+}

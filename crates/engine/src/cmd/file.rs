@@ -44,11 +44,18 @@ fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn open(s: &mut Session, p: &Json) -> Result<Json> {
+    let managed = s.is_managed_document();
+    if managed && s.doc()?.is_dirty() && !bool_param(p, "discard").unwrap_or(false) {
+        return Err(bad(
+            "file.open",
+            "Save the current workbook and wait for its host acknowledgement before importing, or explicitly discard its unsaved changes.",
+        ));
+    }
     let (name, bytes) = if let Some(b) = str_param(p, "base64") {
         (str_param(p, "name").unwrap_or("Book.xlsx").to_string(), crate::io::base64_decode(b).ok_or_else(|| bad("file.open", "invalid base64"))?)
     } else if let Some(path) = str_param(p, "path") {
         // Already open? Switch to it.
-        if let Some(i) = s.documents().iter().position(|d| d.path.as_deref() == Some(path)) {
+        if !managed && let Some(i) = s.documents().iter().position(|d| d.path.as_deref() == Some(path)) {
             s.set_active(i);
             return Ok(json!({"index": i, "alreadyOpen": true}));
         }
@@ -80,7 +87,8 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     // an unprotected copy.
     let path = str_param(p, "path").filter(|_| !imported && !encrypted).map(str::to_string);
     // Replace an untouched blank Book1 like Excel does.
-    if s.documents().len() == 1
+    if !managed
+        && s.documents().len() == 1
         && s.active().is_some_and(|d| d.path.is_none() && !d.is_dirty() && d.undo.is_empty() && d.wb.sheets.iter().all(|sh| sh.cells.is_empty()))
     {
         s.close_document(0);
@@ -90,7 +98,28 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     if crate::io::FileKind::from_path(&name).is_none() && gridcraft_xlsx::sniff(&bytes) == gridcraft_xlsx::Format::Xlsx {
         doc.content_kind = Some(crate::io::FileKind::Xlsx);
     }
-    let i = s.add_document(doc);
+    let i = if managed {
+        let index = s.active_index();
+        let old = s.doc_mut()?;
+        let uid = old.uid;
+        doc.uid = uid;
+        doc.saved = old.saved.clone();
+        doc.revision = old.revision;
+        doc.undo = std::mem::take(&mut old.undo);
+        doc.redo = std::mem::take(&mut old.redo);
+        doc.path = None; // The host, not an imported filename, owns persistence.
+        *old = doc;
+        // Keep the document but replace its windows so the UI cannot retain old
+        // grid gestures, scroll state or selection against the imported workbook.
+        let windows: Vec<u64> = s.windows().iter().filter(|w| w.doc_uid == uid).map(|w| w.id).collect();
+        s.new_window()?;
+        for window in windows {
+            s.close_window(window);
+        }
+        index
+    } else {
+        s.add_document(doc)
+    };
     // The decrypted-workbook notice is for the info bar, not a message box.
     let shown: Vec<&str> = warnings.iter().map(String::as_str).filter(|w| *w != crate::io::DECRYPTED_NOTICE).collect();
     if !shown.is_empty() {
@@ -107,6 +136,9 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn save(s: &mut Session, p: &Json) -> Result<Json> {
+    if s.is_managed_document() {
+        return Err(bad("file.save", "Save must be acknowledged by the embedding host."));
+    }
     let path = match str_param(p, "path").map(str::to_string).or_else(|| s.active().and_then(|d| d.path.clone())) {
         Some(p) => p,
         None => {

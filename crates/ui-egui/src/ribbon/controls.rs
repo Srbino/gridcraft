@@ -233,6 +233,9 @@ fn combo_popup(
 
 pub(super) fn menu_items(app: &mut SheetApp, ui: &mut Ui, items: &[(&str, &str, serde_json::Value)]) {
     for (label, id, p) in items {
+        if !app.show_command(id) {
+            continue;
+        }
         if *label == "-" {
             ui.separator();
             continue;

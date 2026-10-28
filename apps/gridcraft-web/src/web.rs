@@ -65,6 +65,9 @@ pub fn start() {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
                     }
                     let mut app = SheetApp::new(session, services);
+                    if let Some(bridge) = &app_bridge {
+                        bridge.configure_managed_document(&mut app, cc.egui_ctx.clone());
+                    }
                     // A private-port embedding never starts writable, even with a missing/false
                     // query. Only its bound host can unlock it after proving current write access.
                     let read_only =

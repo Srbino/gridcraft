@@ -210,21 +210,33 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) -> Rect {
     }
     if resp.lost_focus() {
         if ui.input(|i| i.key_pressed(Key::Enter)) {
-            // The Enter that commits the Name Box is used up here. Left in the frame's input, the
-            // grid (drawn after the formula bar, and focused again now the box let go) would read
-            // it as its own Enter and move the active cell one row down from the jump target (#247).
-            ui.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: Key::Enter, .. })));
+            // The Name Box owns the events through its committing Enter, including
+            // text already consumed by TextEdit in this same frame. The grid is
+            // drawn next: retaining that text would start a cell edit with the
+            // last address characters. New events after Enter belong to the grid.
+            ui.input_mut(|i| {
+                if let Some(commit) = i.events.iter().position(|e| matches!(e, egui::Event::Key { key: Key::Enter, pressed: true, .. })) {
+                    i.events.drain(..=commit);
+                }
+            });
             let target = text.trim().to_string();
             if !target.is_empty() && target != shown {
                 // A new name for the selection, or a place to go.
                 let is_ref = gridcraft_engine::core::RangeRef::parse(target.split('!').next_back().unwrap_or("")).is_some();
                 let known = app.session.active().is_some_and(|d| d.wb.name(&target, d.wb.active_sheet()).is_some() || d.wb.table(&target).is_some());
-                let r = if is_ref || known {
-                    app.run("edit.goTo", json!({"reference": target}))
-                } else {
-                    app.run("formulas.defineName", json!({"name": target}))
-                };
-                if let Err(e) = r {
+                // Explicit navigation settles the old editor before moving its
+                // selection. Viewing navigation must leave parked drafts held.
+                let settled = if app.is_read_only() { Ok(()) } else { app.settle_drafts() };
+                let r = settled.and_then(|()| {
+                    if is_ref || known {
+                        app.run("edit.goTo", json!({"reference": target}))
+                    } else {
+                        app.run("formulas.defineName", json!({"name": target}))
+                    }
+                });
+                if let Err(e) = r
+                    && app.message.is_none()
+                {
                     app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
                 }
                 app.grid.ensure_visible = true;
@@ -299,6 +311,21 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
     let mut action: Option<(i64, i64, bool, bool)> = None;
     let mut arrow = false;
     let mut cancel = false;
+    // Consume Save here, but run it only after TextEdit has received this
+    // frame's text and the draft is back in the app for settle_drafts.
+    let save = if has_focus && mine && app.message.is_none() && app.dialog.is_none() {
+        ui.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::S) {
+                Some("file.saveAs")
+            } else if i.consume_key(egui::Modifiers::COMMAND, Key::S) {
+                Some("file.save")
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
     // A message box over the editor (a data validation alert, a formula error) gets Enter and Esc;
     // the editor used to take them, so the first Esc cancelled the edit behind the message.
     // So does a dialog opened from the editor (Paste Name): its OK takes Enter.
@@ -626,6 +653,9 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         } else {
             app.commit_edit(dr, dc, array, fill);
         }
+    }
+    if let Some(command) = save {
+        app.run_or_alert(command, json!({}));
     }
     EditorInfo { lines, caret }
 }

@@ -168,7 +168,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     ui.add_space(4.0);
                     ui.label(format!("{} engine commands are available. See docs/mcp.md and docs/control-protocol.md.", gridcraft_engine::command_specs().len()));
                 }
-                "about" => about(ui, &mut d),
+                "about" => about(ui, &mut d, !app.session.is_managed_document() && app.services.open_url.is_some()),
                 "journal" => {
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                         for (id, p) in app.session.journal.iter().rev().take(500) {
@@ -304,6 +304,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     });
                 }
                 "start" => {
+                    if app.show_command("file.new") {
                     ui.heading("Start a new workbook");
                     ui.horizontal_wrapped(|ui| {
                         if ui.button("Blank workbook").clicked() {
@@ -317,6 +318,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                             }
                         }
                     });
+                    }
                     ui.separator();
                     ui.label(egui::RichText::new("Recent").strong());
                     for path in app.ui.recent.clone() {
@@ -335,7 +337,9 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         });
     // Hyperlinks inside dialogs (About ▸ Contributors) open through the host's `open_url`, since
     // the native shell has no browser integration of its own.
-    if let Some(open_url) = &app.services.open_url {
+    if app.session.is_managed_document() {
+        ctx.output_mut(|o| o.commands.retain(|c| !matches!(c, egui::OutputCommand::OpenUrl(_))));
+    } else if let Some(open_url) = &app.services.open_url {
         let urls: Vec<String> = ctx.output_mut(|o| {
             let mut urls = vec![];
             o.commands.retain(|c| match c {

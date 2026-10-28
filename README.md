@@ -152,10 +152,12 @@ store a document or turn the ordinary XLSX Save action into a durable acknowledg
 
 Hosts that durably store native snapshots can opt into `?host=parent&save=managed`.
 Workbook Save (including Ctrl+S) then sends `gridcraft:save-request` (`document`, `revision`)
-and leaves unsaved changes intact. Export a native snapshot using a fresh `requestId` unique
+after applying pending cell text, and leaves unsaved changes intact. A refused draft blocks
+the request. Export a native snapshot using a fresh `requestId` unique
 across frame reloads. After storing it durably, send `gridcraft:save-ack` with that exact
 `requestId`, `document`, and `revision` from `gridcraft:native-exported`. Only the latest
-export can be acknowledged. A matching acknowledgement records the exported workbook as the
+snapshot can be acknowledged; repeated exports of that identical document/revision/workbook
+share a bounded group of request IDs. A matching acknowledgement records the exported workbook as the
 saved baseline; edits made after that export remain unsaved. Old or foreign acknowledgements
 are ignored. Without `save=managed`, ordinary XLSX Save behavior remains unchanged.
 
@@ -171,6 +173,33 @@ All existing document requests and notifications then use structured objects on 
 port, including transferred ArrayBuffer bytes up to 32 MiB. Subsequent window messages are
 ignored. The origin and bundle handshake bind the transport; they grant no storage authority
 or runtime credentials. The legacy `host=parent` mode retains its existing same-origin policy.
+
+With private-port `save=managed`, the host also owns the document lifecycle. User
+File Open and dropped-file imports replace the content under the bound document
+identity, remain undoable and dirty, and retain the last host-confirmed saved
+baseline. Open refuses unsaved content: save it and wait for the matching host
+acknowledgement before retrying. Programmatic callers may explicitly choose
+`discard:true`. New, Close, New Window and desktop XLSX AutoSave controls (including
+File Options) are unavailable in this mode. Trusted
+correlated host startup imports remain clean and retain their read-only guard.
+Ordinary Save requests native host storage; Save As and explicit exports send
+`gridcraft:save` download bytes without changing the saved baseline. Downloads
+never substitute for the exact native save acknowledgement. Standalone and
+legacy parent document lifecycle remain unchanged.
+Managed hosts without a clipboard-read service omit toolbar and context-menu
+Paste actions, which could otherwise paste stale internal data after the OS
+clipboard changes. User-triggered Ctrl/Cmd+V paste events remain supported;
+Copy can use separately delegated clipboard-write without clipboard-read.
+Opaque managed frames also omit direct OS printing. File Print and Ctrl/Cmd+P
+keep the native preview and offer Create PDF through the parent download channel;
+exporting that printable copy never acknowledges a durable native save.
+Desktop update checks and desktop control-channel instructions are omitted in the
+managed UI. About keeps product information and credits without blocked external
+popup links. External cell links remain stored and exported, but following them
+is refused without offering a blocked popup; internal workbook links still navigate.
+Repeated exports of the same immutable workbook keep up to 256 exact
+request aliases, so a later identical capture does not invalidate an in-flight
+save acknowledgement; a different workbook or revision replaces those aliases.
 
 Private-port hosts start read-only before the first interactive frame, including when the
 `readonly` query is missing or `0`; `readonly=1` explicitly documents that boot intent.

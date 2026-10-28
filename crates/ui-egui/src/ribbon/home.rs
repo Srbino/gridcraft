@@ -25,57 +25,68 @@ pub(super) fn home(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let st = active_style(app);
     // Clipboard
-    let paste = big_button(ui, Icon::Paste, "Paste", "Paste", true);
-    paste.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Paste"));
-    for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["edit.paste", "edit.pasteSpecial", "dialog:pasteSpecial"])
-    {
-        keytip(app, ui, sequence, paste.rect.center_bottom());
+    if app.show_command("edit.paste") {
+        let paste = big_button(ui, Icon::Paste, "Paste", "Paste", true);
+        paste.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Paste"));
+        for sequence in
+            keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["edit.paste", "edit.pasteSpecial", "dialog:pasteSpecial"])
+        {
+            keytip(app, ui, sequence, paste.rect.center_bottom());
+        }
+        if paste.clicked() {
+            app.paste_from_clipboard();
+        }
+        let paste_keys = matches!(app.keytips.prefix(), Some("HV" | "E"));
+        // Keep a keyboard-opened menu anchored to the button when a pointer click
+        // cancels keytips, so its items remain in place and can still be clicked.
+        let anchor_id = paste.id.with("keytip_anchor");
+        // Query response state before taking the egui context write lock.
+        // Calling secondary_clicked() inside data_mut can deadlock.
+        let paste_secondary_clicked = paste.secondary_clicked();
+        let anchored = ui.ctx().data_mut(|data| {
+            let anchored = if paste_keys {
+                true
+            } else if paste_secondary_clicked {
+                false
+            } else {
+                data.get_temp::<bool>(anchor_id).unwrap_or(false)
+            };
+            data.insert_temp(anchor_id, anchored);
+            anchored
+        });
+        let mut paste_popup = egui::Popup::context_menu(&paste);
+        if anchored {
+            paste_popup = paste_popup.anchor(&paste);
+        }
+        if paste_keys {
+            paste_popup = paste_popup.open_memory(egui::SetOpenCommand::Bool(true));
+        }
+        paste_popup.show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Paste", "edit.paste", json!({})),
+                    ("Paste Values", "edit.pasteSpecial", json!({"what": "values"})),
+                    ("Paste Formulas", "edit.pasteSpecial", json!({"what": "formulas"})),
+                    ("Paste Formatting", "edit.pasteSpecial", json!({"what": "formats"})),
+                    ("Transpose", "edit.pasteSpecial", json!({"what": "all", "transpose": true})),
+                    ("Paste Link", "edit.pasteSpecial", json!({"what": "all", "link": true})),
+                    ("-", "", json!(null)),
+                    ("Paste Special…", "dialog:pasteSpecial", json!({})),
+                ],
+            );
+        });
+    } else {
+        // A trusted keyboard paste event still carries the user's text without
+        // granting a foreign opaque frame programmatic clipboard-read access.
+        let shortcut = if ui.ctx().os() == egui::os::OperatingSystem::Mac { "⌘V" } else { "Ctrl+V" };
+        ui.allocate_ui_with_layout(vec2(52.0, 72.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.add_space(22.0);
+            ui.label(egui::RichText::new(shortcut).font(theme::ui_font(11.5)).color(t.text_dim))
+                .on_hover_text(format!("{} ({shortcut})", app.ui.language.tr("Paste")));
+        });
     }
-    if paste.clicked() {
-        app.paste_from_clipboard();
-    }
-    let paste_keys = matches!(app.keytips.prefix(), Some("HV" | "E"));
-    // Keep a keyboard-opened menu anchored to the button when a pointer click
-    // cancels keytips, so its items remain in place and can still be clicked.
-    let anchor_id = paste.id.with("keytip_anchor");
-    // Query response state before taking the egui context write lock.
-    // Calling secondary_clicked() inside data_mut can deadlock.
-    let paste_secondary_clicked = paste.secondary_clicked();
-    let anchored = ui.ctx().data_mut(|data| {
-        let anchored = if paste_keys {
-            true
-        } else if paste_secondary_clicked {
-            false
-        } else {
-            data.get_temp::<bool>(anchor_id).unwrap_or(false)
-        };
-        data.insert_temp(anchor_id, anchored);
-        anchored
-    });
-    let mut paste_popup = egui::Popup::context_menu(&paste);
-    if anchored {
-        paste_popup = paste_popup.anchor(&paste);
-    }
-    if paste_keys {
-        paste_popup = paste_popup.open_memory(egui::SetOpenCommand::Bool(true));
-    }
-    paste_popup.show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Paste", "edit.paste", json!({})),
-                ("Paste Values", "edit.pasteSpecial", json!({"what": "values"})),
-                ("Paste Formulas", "edit.pasteSpecial", json!({"what": "formulas"})),
-                ("Paste Formatting", "edit.pasteSpecial", json!({"what": "formats"})),
-                ("Transpose", "edit.pasteSpecial", json!({"what": "all", "transpose": true})),
-                ("Paste Link", "edit.pasteSpecial", json!({"what": "all", "link": true})),
-                ("-", "", json!(null)),
-                ("Paste Special…", "dialog:pasteSpecial", json!({})),
-            ],
-        );
-    });
     ui.vertical(|ui| {
         let __k = icon_button(ui, Icon::Cut, t.text, "Cut", vec2(26.0, 23.0));
         control_keytip(app, ui, &__k, "edit.cut");

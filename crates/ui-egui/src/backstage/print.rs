@@ -24,12 +24,20 @@ pub(super) fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &m
             if let Some(discover) = &app.services.printers {
                 crate::printing::show(&mut app.printing, ui, discover, |label| lang.tr(label).to_owned());
             }
-            let can_print = app.services.print_native.is_none() || app.printing.ready();
-            if ui.add_enabled_ui(can_print, |ui| square_button(ui, Icon::Print, lang.tr("Print"))).inner.clicked()
-                && app.commit_edit(0, 0, false, false)
-            {
-                app.print_now(params.clone());
-                out.close = app.services.print_native.is_none();
+            if app.show_command("file.print") {
+                let can_print = app.services.print_native.is_none() || app.printing.ready();
+                if ui.add_enabled_ui(can_print, |ui| square_button(ui, Icon::Print, lang.tr("Print"))).inner.clicked()
+                    && app.commit_edit(0, 0, false, false)
+                {
+                    app.print_now(params.clone());
+                    out.close = app.services.print_native.is_none();
+                }
+            } else if app.services.download.is_some() {
+                let enabled = gridcraft_engine::find_command("file.exportPdf").is_some_and(|spec| spec.availability(&app.session).is_ok());
+                if ui.add_enabled_ui(enabled, |ui| square_button(ui, Icon::Paper, lang.tr("Create PDF"))).inner.clicked() {
+                    app.run_or_alert("file.exportPdf", params.clone());
+                    out.close = true;
+                }
             }
             ui.add_space(16.0);
             let scope = if bs.print_all { "Print Entire Workbook" } else { "Print Active Sheets" };

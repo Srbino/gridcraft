@@ -872,6 +872,9 @@ pub fn follow_link(app: &mut SheetApp, target: &str) {
             let _ = app.session.run("edit.goTo", json!({"reference": r.trim_start_matches('#')}));
             app.grid.ensure_visible = true;
         }
+        LinkKind::External(_) if app.session.is_managed_document() => {
+            app.message = Some(("Hyperlink".into(), "External links cannot be opened in this editor. The link remains in the workbook.".into()));
+        }
         LinkKind::External(url) => app.open_dialog("openLink", json!({"url": url})),
         LinkKind::Refused(why) => app.message = Some(("Hyperlink".into(), why)),
     }
