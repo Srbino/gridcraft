@@ -1366,3 +1366,85 @@ fn name_box_readonly_navigation_does_not_flush_held_cell_or_textbox_drafts() {
         }
     }
 }
+
+fn click_visible_native_action(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str) {
+    let mut texts = Vec::new();
+    for shape in &h.output().shapes {
+        text_shapes(&shape.shape, shape.clip_rect, &mut texts);
+    }
+    let pos = texts
+        .iter()
+        .find(|(text, clip)| text.galley.job.text == label && clip.is_positive())
+        .map(|(text, _)| text.pos + text.galley.size() * 0.5)
+        .unwrap_or_else(|| panic!("missing painted native action: {label}"));
+    click(h, pos);
+    h.run_steps(3);
+}
+
+#[test]
+fn managed_hides_three_unsupported_share_copies_but_keeps_pdf() {
+    let labels = ["Save a Copy as Excel Workbook (.xlsx)…", "Export as CSV…", "Export as Web Page (.html)…"];
+    let mut h = harness(blank());
+    click_visible_native_action(&mut h, "Share");
+    h.run_steps(3);
+    for label in labels {
+        assert!(h.query_by_label(label).is_some(), "standalone actual Share calibration: {label}");
+    }
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    click_visible_native_action(&mut h, "Share");
+    h.run_steps(3);
+    assert!(h.query_by_label("Export as PDF…").is_some(), "supported Share PDF remains");
+    let visible: Vec<_> = labels.into_iter().filter(|label| h.query_by_label(label).is_some()).collect();
+    assert!(visible.is_empty(), "unsupported managed Share actions still offered: {visible:?}");
+}
+
+#[test]
+fn managed_hides_two_unsupported_what_if_actions_but_keeps_goal_seek_and_solver() {
+    let labels = ["Scenario Manager…", "Data Table…"];
+    let mut h = harness(blank());
+    h.state_mut().ui.ribbon_tab = "Data".into();
+    h.run_steps(3);
+    click_visible_native_action(&mut h, "What-If");
+    h.run_steps(3);
+    for label in labels {
+        assert!(h.query_by_label(label).is_some(), "standalone actual What-If calibration: {label}");
+    }
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    let mut texts = Vec::new();
+    for shape in &h.output().shapes {
+        text_shapes(&shape.shape, shape.clip_rect, &mut texts);
+    }
+    assert!(texts.iter().any(|(text, clip)| text.galley.job.text == "Solver" && clip.is_positive()), "supported Solver remains in Data");
+    click_visible_native_action(&mut h, "What-If");
+    h.run_steps(3);
+    assert!(h.query_by_label("Goal Seek…").is_some(), "supported Goal Seek remains in What-If");
+    let visible: Vec<_> = labels.into_iter().filter(|label| h.query_by_label(label).is_some()).collect();
+    assert!(visible.is_empty(), "unsupported managed What-If actions still offered: {visible:?}");
+}
+
+#[test]
+fn managed_command_search_hides_unsupported_what_if_but_keeps_functional_commands() {
+    fn offered(h: &mut egui_kittest::Harness<'static, SheetApp>, id: &str) -> bool {
+        let info = h.state().session.commands().into_iter().find(|c| c.id == id).unwrap();
+        let label = format!("{}    {}", info.label, info.menu.join(" › "));
+        h.state_mut().dialog = None;
+        h.state_mut().open_dialog("commandSearch", json!({}));
+        h.state_mut().dialog.as_mut().unwrap().search = id.into();
+        h.run_steps(3);
+        h.query_by_label(&label).is_some()
+    }
+    let mut h = harness(blank());
+    for id in ["data.scenarioManager", "data.dataTable"] {
+        assert!(offered(&mut h, id), "standalone palette calibration: {id}");
+    }
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    let visible: Vec<_> = ["data.scenarioManager", "data.dataTable"].into_iter().filter(|id| offered(&mut h, id)).collect();
+    assert!(visible.is_empty(), "unsupported managed search actions still offered: {visible:?}");
+    for id in ["file.open", "file.saveAs", "data.solver", "formulas.calculateNow"] {
+        assert!(offered(&mut h, id), "functional palette action remains: {id}");
+    }
+}

@@ -80,9 +80,9 @@ pub(super) fn data(app: &mut SheetApp, ui: &mut Ui) {
     });
     sep(ui);
     let wi = big_button(ui, Icon::Calc, "What-If\nAnalysis", "What-If Analysis", true);
-    for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:goalSeek", "data.scenarioManager", "data.dataTable"])
-    {
+    let what_if_commands: Vec<_> =
+        ["dialog:goalSeek", "data.scenarioManager", "data.dataTable"].into_iter().filter(|id| app.show_command(id)).collect();
+    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &what_if_commands) {
         keytip(app, ui, sequence, wi.rect.center_bottom());
     }
     egui::Popup::menu(&wi).show(|ui| {
