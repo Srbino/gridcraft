@@ -160,7 +160,7 @@ mod tests {
         let snapshot = crate::native_document::export(&mut app).unwrap();
         let (wb, _) = gridcraft_engine::io::open_bytes("snapshot.json", &snapshot.bytes).unwrap();
         assert_eq!(wb.active().unwrap().shapes.iter().find(|shape| shape.id == id).unwrap().text, "pending text");
-        assert!(app.text_box_editor.is_none());
+        assert_eq!(app.text_box_editor.as_ref().unwrap().text, "pending text", "a native checkpoint keeps the ongoing text-box edit");
     }
 
     #[test]

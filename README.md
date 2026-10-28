@@ -162,6 +162,9 @@ saved baseline; edits made after that export remain unsaved. Old or foreign ackn
 are ignored. Without `save=managed`, ordinary XLSX Save behavior remains unchanged.
 Native revision tokens also distinguish serialized workbook views (active sheet/cell and
 saved scroll positions). Merely navigating a view does not grant storage authority.
+Background native checkpoints preserve ongoing cell/text-box input, caret and selection,
+and do not accept an AutoComplete suggestion. Finishing the edit keeps one Undo gesture;
+cancelling restores the original content and requires a new save if a checkpoint was acknowledged.
 
 For an opaque sandboxed iframe, use `?host=port&parent_origin=https%3A%2F%2Fhost.example`
 (and `&save=managed` for durable native saves). Serve it at a pinned

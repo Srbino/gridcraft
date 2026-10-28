@@ -18,6 +18,14 @@ pub struct EditState {
 }
 
 impl EditState {
+    pub(crate) fn snapshot_owner(&self) -> crate::app::native_snapshot::NativeSnapshotOwner {
+        crate::app::native_snapshot::NativeSnapshotOwner::TextBox(self.uid, self.sheet, self.id)
+    }
+
+    pub(crate) fn checkpoint_text(&mut self) {
+        self.original = self.text.clone();
+    }
+
     /// The native pending text differs from the engine's original text box.
     pub fn is_modified(&self) -> bool {
         self.text != self.original
@@ -72,6 +80,7 @@ impl SheetApp {
             return Err("The workbook is read-only; the text-box draft is retained.".into());
         }
         let Some(ed) = self.text_box_editor.take() else { return Ok(()) };
+        let snapshot_owner = ed.snapshot_owner();
         let result = if self.view_key() != Some((ed.uid, ed.sheet)) {
             Err("The text box's worksheet is no longer active.".into())
         } else if ed.text == ed.original {
@@ -82,6 +91,11 @@ impl SheetApp {
         };
         match result {
             Ok(()) => {
+                if let Err(error) = self.finish_native_snapshot_owner(snapshot_owner, false) {
+                    self.text_box_editor = Some(ed);
+                    self.session.mode = Mode::Edit;
+                    return Err(error);
+                }
                 self.session.mode = Mode::Ready;
                 self.after_engine();
                 Ok(())
@@ -94,7 +108,13 @@ impl SheetApp {
     }
 
     pub fn cancel_text_box_edit(&mut self) {
-        self.text_box_editor = None;
+        if let Some(edit) = self.text_box_editor.take()
+            && let Err(error) = self.finish_native_snapshot_owner(edit.snapshot_owner(), true)
+        {
+            self.text_box_editor = Some(edit);
+            self.message = Some(("Text Box".into(), error));
+            return;
+        }
         self.session.mode = Mode::Ready;
     }
 

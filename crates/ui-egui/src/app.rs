@@ -12,6 +12,7 @@ mod fonts;
 mod input;
 mod keys;
 mod managed_document;
+pub(crate) mod native_snapshot;
 mod prefs;
 mod print;
 mod quit;
@@ -28,6 +29,7 @@ impl SheetApp {
             editor: None,
             text_box_editor: None,
             held_drafts: None,
+            native_snapshot_group: None,
             dialog: None,
             backstage: None,
             message: None,

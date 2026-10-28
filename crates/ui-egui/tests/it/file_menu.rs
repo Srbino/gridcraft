@@ -885,3 +885,28 @@ fn managed_raw_shortcuts_do_not_insert_their_following_text() {
         }
     }
 }
+
+#[test]
+fn native_checkpoint_keeps_textedit_local_undo_and_finishes_as_one_engine_undo() {
+    let mut h = harness(Services::default());
+    h.state_mut().run("cell.set", serde_json::json!({"cell":"A1","input":"original"})).unwrap();
+    h.input_mut().events.push(egui::Event::Text("Rep".into()));
+    h.run_steps(2);
+    h.state_mut().native_snapshot_bytes().unwrap();
+    assert!(h.state().editor.is_some());
+    h.input_mut().events.push(egui::Event::Text("eated".into()));
+    h.run_steps(2);
+    let before = h.state().cell_draft().unwrap().text.clone();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run_steps(2);
+    assert!(h.state().editor.is_some(), "Ctrl+Z is handled by the live TextEdit");
+    assert_ne!(h.state().cell_draft().unwrap().text, before);
+    assert!(h.state().message.is_none());
+    assert!(h.state().session.in_group(h.state().session.active().unwrap().uid));
+    h.key_press(egui::Key::Enter);
+    h.run_steps(2);
+    assert!(h.state().editor.is_none());
+    assert!(!h.state().session.in_group(h.state().session.active().unwrap().uid));
+    h.state_mut().run("edit.undo", serde_json::json!({})).unwrap();
+    assert_eq!(h.state().session.active().unwrap().wb.active().unwrap().value(CellRef::new(0, 0)), Value::text("original"));
+}
