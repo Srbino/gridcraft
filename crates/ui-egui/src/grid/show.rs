@@ -633,7 +633,15 @@ pub(crate) fn paint_overlays(
     if let Some(h) = hover.and_then(|c| sh.hyperlinks.get(&c))
         && app.editor.is_none()
     {
-        let tip = h.tooltip.clone().unwrap_or_else(|| format!("{}\nClick once to follow. Click and hold to select this cell.", h.target));
+        let tip = h.tooltip.clone().unwrap_or_else(|| {
+            if app.session.is_managed_document()
+                && matches!(gridcraft_engine::links::classify(&h.target), gridcraft_engine::links::LinkKind::External(_))
+            {
+                h.target.clone()
+            } else {
+                format!("{}\nClick once to follow. Click and hold to select this cell.", h.target)
+            }
+        });
         egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::unique("link_tip"), egui::PopupAnchor::Pointer).show(|ui| {
             ui.label(tip);
         });

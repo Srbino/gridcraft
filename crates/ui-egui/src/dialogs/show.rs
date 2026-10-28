@@ -337,7 +337,9 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         });
     // Hyperlinks inside dialogs (About ▸ Contributors) open through the host's `open_url`, since
     // the native shell has no browser integration of its own.
-    if let Some(open_url) = &app.services.open_url {
+    if app.session.is_managed_document() {
+        ctx.output_mut(|o| o.commands.retain(|c| !matches!(c, egui::OutputCommand::OpenUrl(_))));
+    } else if let Some(open_url) = &app.services.open_url {
         let urls: Vec<String> = ctx.output_mut(|o| {
             let mut urls = vec![];
             o.commands.retain(|c| match c {

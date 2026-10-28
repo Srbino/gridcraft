@@ -723,3 +723,36 @@ fn managed_about_keeps_information_without_unusable_external_links() {
     assert!(h.query_by_label("Contributors").is_some());
     assert!(h.query_by_label("Models").is_some());
 }
+
+#[test]
+fn managed_options_do_not_offer_desktop_xlsx_autosave() {
+    let mut h = harness(Services::default());
+    h.state_mut().run("file.options", serde_json::json!({})).unwrap();
+    h.run_steps(3);
+    let label = "Save .xlsx workbooks automatically after every change";
+    assert!(h.query_by_label(label).is_some(), "standalone positive calibration");
+    assert!(h.state().session.active().unwrap().path.is_none());
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert!(h.query_by_label(label).is_none(), "the host owns native storage; this desktop xlsx option cannot work");
+    assert!(h.query_by_label("Enable AutoComplete for cell values").is_some(), "functional editing options remain");
+}
+
+#[test]
+fn managed_file_tab_save_requests_native_storage_instead_of_opening_save_as() {
+    let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let capture = requested.clone();
+    let mut h = harness(Services::default());
+    h.state_mut().set_managed_document_save(Some(Box::new(move || {
+        capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    })));
+    h.state_mut().run("cell.set", serde_json::json!({"cell":"A1","input":"native file save"})).unwrap();
+    assert!(h.state().session.active().unwrap().path.is_none());
+    let baseline = h.state().session.active().unwrap().saved.clone();
+    choose(&mut h, "Save");
+    assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), 1, "File Save uses the same native storage request as Ctrl+S");
+    assert!(h.state().backstage.is_none());
+    assert!(Arc::ptr_eq(&baseline, &h.state().session.active().unwrap().saved), "requesting Save never acknowledges storage");
+    assert!(h.state().session.active().unwrap().is_dirty());
+}

@@ -147,6 +147,7 @@ impl Bridge {
             // The opaque editor cannot load a nested blob/PDF frame. Its
             // printable copy uses the existing parent-owned download channel.
             services.print = None;
+            services.open_url = None;
         }
         if self.port.is_some() {
             self.listen_port(inbox, ctx);

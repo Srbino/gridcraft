@@ -257,7 +257,7 @@ fn save(app: &mut SheetApp, out: &mut Outcome) {
     if !app.commit_edit(0, 0, false, false) {
         return;
     }
-    if app.session.active().is_some_and(|d| d.path.is_some()) {
+    if app.session.is_managed_document() || app.session.active().is_some_and(|d| d.path.is_some()) {
         app.run_or_alert("file.save", json!({}));
         out.close = true;
     } else {

@@ -177,7 +177,8 @@ File Open and dropped-file imports replace the content under the bound document
 identity, remain undoable and dirty, and retain the last host-confirmed saved
 baseline. Open refuses unsaved content: save it and wait for the matching host
 acknowledgement before retrying. Programmatic callers may explicitly choose
-`discard:true`. New, Close and New Window are unavailable in this mode. Trusted
+`discard:true`. New, Close, New Window and desktop XLSX AutoSave controls (including
+File Options) are unavailable in this mode. Trusted
 correlated host startup imports remain clean and retain their read-only guard.
 Ordinary Save requests native host storage; Save As and explicit exports send
 `gridcraft:save` download bytes without changing the saved baseline. Downloads
@@ -192,7 +193,9 @@ keep the native preview and offer Create PDF through the parent download channel
 exporting that printable copy never acknowledges a durable native save.
 Desktop update checks and desktop control-channel instructions are omitted in the
 managed UI. About keeps product information and credits without blocked external
-popup links. Repeated exports of the same immutable workbook keep up to 256 exact
+popup links. External cell links remain stored and exported, but following them
+is refused without offering a blocked popup; internal workbook links still navigate.
+Repeated exports of the same immutable workbook keep up to 256 exact
 request aliases, so a later identical capture does not invalidate an in-flight
 save acknowledgement; a different workbook or revision replaces those aliases.
 

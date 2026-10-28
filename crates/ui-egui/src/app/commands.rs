@@ -70,7 +70,9 @@ impl SheetApp {
         }
         // Requests the command made (a dialog, a draft) belong to the window it left active.
         self.follow_active_window();
-        self.after_engine();
+        if self.after_engine_with_link_policy() {
+            return Err("External links cannot be opened in this editor. The link remains in the workbook.".into());
+        }
         if id == "view.arrangeAll"
             && self.native_windows
             && let Ok(r) = &r
@@ -264,6 +266,13 @@ impl SheetApp {
 
     /// Picks up requests commands made (dialogs, edit mode…).
     pub fn after_engine(&mut self) {
+        if self.after_engine_with_link_policy() {
+            self.message = Some(("Hyperlink".into(), "External links cannot be opened in this editor. The link remains in the workbook.".into()));
+        }
+    }
+
+    fn after_engine_with_link_policy(&mut self) -> bool {
+        let mut blocked_external = false;
         // The requests belong to the window the command left active.
         self.follow_active_window();
         for req in self.session.take_ui_requests() {
@@ -281,12 +290,15 @@ impl SheetApp {
                 }
                 UiRequest::InsertName(name) => dialogs::insert_name(self, &name),
                 UiRequest::OpenUrl(u) => {
-                    if let Some(f) = &self.services.open_url {
+                    if self.session.is_managed_document() {
+                        blocked_external = true;
+                    } else if let Some(f) = &self.services.open_url {
                         f(&u);
                     }
                 }
             }
         }
+        blocked_external
     }
 
     /// Whether the active sheet of the active document is protected (drives the Protect/Unprotect
@@ -296,6 +308,10 @@ impl SheetApp {
     }
 
     pub fn open_dialog(&mut self, name: &str, params: Json) {
+        if name == "openLink" && self.session.is_managed_document() {
+            self.message = Some(("Hyperlink".into(), "External links cannot be opened in this editor. The link remains in the workbook.".into()));
+            return;
+        }
         if !self.is_read_only()
             && let Err(e) = self.commit_text_box_edit()
         {

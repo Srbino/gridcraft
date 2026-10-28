@@ -7,7 +7,7 @@ impl SheetApp {
         if !self.session.is_managed_document() {
             return true;
         }
-        if matches!(id, "app.checkForUpdates" | "help.checkForUpdates" | "dialog:agents" | "ui:agents") {
+        if matches!(id, "app.checkForUpdates" | "help.checkForUpdates" | "dialog:agents" | "ui:agents" | "link.open") {
             return false;
         }
         if id == "file.print" {

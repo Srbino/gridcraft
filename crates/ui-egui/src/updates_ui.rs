@@ -57,7 +57,9 @@ pub(crate) fn show(app: &mut SheetApp, ctx: &egui::Context) {
     let clean = !app.session.documents().iter().any(|d| d.is_dirty());
     match app.updates_rt.updater.show_if(ctx, clean) {
         Action::OpenUrl(url) => {
-            if let Some(open) = &app.services.open_url {
+            if !app.session.is_managed_document()
+                && let Some(open) = &app.services.open_url
+            {
                 open(&url);
             }
         }
