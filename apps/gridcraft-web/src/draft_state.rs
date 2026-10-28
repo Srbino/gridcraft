@@ -1,12 +1,14 @@
 //! Bounded host revision pulses include pending native editor drafts.
 
-use gridcraft_engine::core::CellRef;
+use std::sync::Arc;
+
+use gridcraft_engine::{core::CellRef, model::Workbook};
 use gridcraft_ui_egui::SheetApp;
 use sha2::{Digest, Sha256};
 
 #[derive(PartialEq)]
 struct Fingerprint {
-    active: Option<(u64, u64)>,
+    active: Option<(u64, u64, usize)>,
     cell: Option<(u64, usize, CellRef, [u8; 32])>,
     text_box: Option<(u32, [u8; 32])>,
 }
@@ -20,18 +22,23 @@ pub fn dirty(app: &SheetApp) -> bool {
     app.session.documents().iter().any(|doc| doc.is_dirty()) || app.has_unsaved_drafts()
 }
 
-/// Constant-size activity state: never clone or retain an input-sized draft.
+/// Bounded activity state: one shared workbook identity and fixed-size draft fingerprints.
+/// Holding the Arc forces copy-on-write for serialized view changes too; it also
+/// prevents pointer reuse from making a different workbook look unchanged.
 /// The counter is an opaque equality token, not a JavaScript number or a lease.
 #[derive(Default)]
 pub struct Revisions {
     previous: Option<Fingerprint>,
+    workbook: Option<Arc<Workbook>>,
     serial: u64,
 }
 
 impl Revisions {
     pub fn observe(&mut self, app: &SheetApp) -> bool {
         let fingerprint = Fingerprint {
-            active: app.session.active().map(|doc| (doc.uid, doc.revision)),
+            // ActiveSheet is serialized AtomicUsize interior state: snapshot
+            // its value, since Arc identity alone cannot observe a sheet switch.
+            active: app.session.active().map(|doc| (doc.uid, doc.revision, doc.wb.active_sheet())),
             cell: app
                 .editor
                 .as_ref()
@@ -43,10 +50,17 @@ impl Revisions {
                 .filter(|edit| edit.is_modified())
                 .map(|edit| (edit.id, Sha256::digest(edit.text.as_bytes()).into())),
         };
-        if self.previous.as_ref() == Some(&fingerprint) {
+        let workbook = app.session.active().map(|doc| &doc.wb);
+        let same_workbook = match (&self.workbook, workbook) {
+            (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
+            (None, None) => true,
+            _ => false,
+        };
+        if self.previous.as_ref() == Some(&fingerprint) && same_workbook {
             return false;
         }
         self.previous = Some(fingerprint);
+        self.workbook = workbook.cloned();
         self.serial = self.serial.wrapping_add(1);
         true
     }
@@ -62,6 +76,8 @@ impl Revisions {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gridcraft_engine::Session;
     use gridcraft_ui_egui::{Services, SheetApp};
     use serde_json::json;
@@ -145,6 +161,96 @@ mod tests {
         let (wb, _) = gridcraft_engine::io::open_bytes("snapshot.json", &snapshot.bytes).unwrap();
         assert_eq!(wb.active().unwrap().shapes.iter().find(|shape| shape.id == id).unwrap().text, "pending text");
         assert!(app.text_box_editor.is_none());
+    }
+
+    #[test]
+    fn serialized_view_changes_get_a_fresh_wire_revision_but_idle_navigation_does_not() {
+        let mut app = app();
+        let mut revisions = super::Revisions::default();
+        let first = crate::native_document::export(&mut app).unwrap();
+        revisions.observe(&app);
+        let before = revisions.revision();
+        let noop = crate::native_document::export(&mut app).unwrap();
+        assert!(!revisions.observe(&app));
+        assert_eq!(first.bytes, noop.bytes);
+        app.session.run("selection.set", json!({"cell":"A2"})).unwrap();
+        assert!(!revisions.observe(&app), "view-only navigation does not create an edit pulse");
+        let second = crate::native_document::export(&mut app).unwrap();
+        assert_ne!(first.bytes, second.bytes, "actual native view_active changed");
+        assert!(revisions.observe(&app), "different serialized bytes need a new wire identity");
+        assert_ne!(before, revisions.revision());
+        let stable = crate::native_document::export(&mut app).unwrap();
+        assert_eq!(second.bytes, stable.bytes);
+        assert!(!revisions.observe(&app));
+    }
+
+    #[test]
+    fn all_serialized_view_fields_refresh_identity_and_noop_exports_stay_stable() {
+        let mut app = app();
+        app.run("home.insertSheet", json!({"name":"Second"})).unwrap();
+        let mut revisions = super::Revisions::default();
+        let first = crate::native_document::export(&mut app).unwrap();
+        revisions.observe(&app);
+        let mut previous = (first.bytes, revisions.revision());
+        for (command, arguments) in
+            [("sheet.activate", json!({"sheet":0})), ("view.zoom", json!({"percent":150})), ("view.gridlines", json!({"on":false}))]
+        {
+            app.run(command, arguments).unwrap();
+            let exported = crate::native_document::export(&mut app).unwrap();
+            revisions.observe(&app);
+            assert_ne!(previous.0, exported.bytes, "{command} changes actual native bytes");
+            assert_ne!(previous.1, revisions.revision(), "{command} needs fresh identity");
+            previous = (exported.bytes, revisions.revision());
+        }
+        app.view_mut().unwrap().scroll.y = 160.0;
+        assert!(!revisions.observe(&app), "an unmaterialized scroll is not a content edit pulse");
+        let scrolled = crate::native_document::export(&mut app).unwrap();
+        assert_ne!(previous.0, scrolled.bytes);
+        assert!(revisions.observe(&app), "store_view materializes native view_top_left");
+        let stable = crate::native_document::export(&mut app).unwrap();
+        assert_eq!(scrolled.bytes, stable.bytes);
+        assert!(!revisions.observe(&app));
+    }
+
+    #[test]
+    fn active_sheet_atomic_changes_identity_even_when_workbook_arc_and_content_revision_match() {
+        let mut app = app();
+        app.run("home.insertSheet", json!({"name":"Second"})).unwrap();
+        let mut revisions = super::Revisions::default();
+        revisions.observe(&app);
+        let before = revisions.revision();
+        let workbook = app.session.active().unwrap().wb.clone();
+        let content_revision = app.session.active().unwrap().revision;
+        app.session.run("sheet.activate", json!({"sheet":0})).unwrap();
+        assert!(Arc::ptr_eq(&workbook, &app.session.active().unwrap().wb));
+        assert_eq!(content_revision, app.session.active().unwrap().revision);
+        assert!(revisions.observe(&app));
+        assert_ne!(before, revisions.revision());
+        assert!(!revisions.observe(&app));
+    }
+
+    #[test]
+    fn older_ack_after_sheet_switch_cannot_clean_a_later_cell_edit_or_held_readonly_draft() {
+        let mut app = app();
+        app.run("home.insertSheet", json!({"name":"Second"})).unwrap();
+        let mut revisions = super::Revisions::default();
+        let original = crate::native_document::export(&mut app).unwrap();
+        revisions.observe(&app);
+        let mut saves = crate::managed_save::ManagedSaves::default();
+        let before = revisions.revision();
+        saves.remember("original", &original, &app, &before).unwrap();
+        app.session.run("sheet.activate", json!({"sheet":0})).unwrap();
+        revisions.observe(&app);
+        app.run("cell.set", json!({"cell":"A2","input":"new content"})).unwrap();
+        assert!(saves.acknowledge(&mut app, "original", &original.document, &before));
+        assert!(super::dirty(&app), "old snapshot cannot clean later content");
+        app.begin_edit(Some("parked readonly text".into()), false);
+        app.set_read_only(true);
+        let workbook = app.session.active().unwrap().wb.clone();
+        assert!(crate::native_document::export(&mut app).is_err());
+        assert!(Arc::ptr_eq(&workbook, &app.session.active().unwrap().wb));
+        assert_eq!(app.cell_draft().unwrap().text, "parked readonly text");
+        assert!(super::dirty(&app));
     }
 
     #[test]
