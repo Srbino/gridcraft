@@ -172,6 +172,18 @@ port, including transferred ArrayBuffer bytes up to 32 MiB. Subsequent window me
 ignored. The origin and bundle handshake bind the transport; they grant no storage authority
 or runtime credentials. The legacy `host=parent` mode retains its existing same-origin policy.
 
+With private-port `save=managed`, the host also owns the document lifecycle. User
+File Open and dropped-file imports replace the content under the bound document
+identity, remain undoable and dirty, and retain the last host-confirmed saved
+baseline. Open refuses unsaved content: save it and wait for the matching host
+acknowledgement before retrying. Programmatic callers may explicitly choose
+`discard:true`. New, Close and New Window are unavailable in this mode. Trusted
+correlated host startup imports remain clean and retain their read-only guard.
+Ordinary Save requests native host storage; Save As and explicit exports send
+`gridcraft:save` download bytes without changing the saved baseline. Downloads
+never substitute for the exact native save acknowledgement. Standalone and
+legacy parent document lifecycle remain unchanged.
+
 Private-port hosts start read-only before the first interactive frame, including when the
 `readonly` query is missing or `0`; `readonly=1` explicitly documents that boot intent.
 The private `gridcraft:ready` includes `accessProtocol:1` and the actual `readOnly` state.

@@ -62,6 +62,9 @@ pub struct CommandInfo {
 impl CommandSpec {
     /// Runtime access is separate from workbook/sheet protection and is never serialized.
     pub fn availability(&self, s: &Session) -> std::result::Result<(), String> {
+        if s.is_managed_document() && matches!(self.id, "file.new" | "file.close" | "window.close" | "view.newWindow") {
+            return Err("document lifecycle is owned by the embedding host".into());
+        }
         // Query metadata describes journaling, not write authority: even a query can
         // mutate native state (for example formulas.watchWindow writes the workbook stash).
         // New commands stay disabled until their read-only behavior has been reviewed.

@@ -11,6 +11,7 @@ mod files;
 mod fonts;
 mod input;
 mod keys;
+mod managed_document;
 mod prefs;
 mod print;
 mod quit;
@@ -33,6 +34,7 @@ impl SheetApp {
             toast: None,
             notice: None,
             services,
+            managed_document_save: None,
             printing: Default::default(),
             print_feedback_seen: None,
             synthetic: Default::default(),

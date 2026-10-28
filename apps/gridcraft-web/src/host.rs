@@ -34,6 +34,9 @@
 //! path segment. The exact parent and origin must connect with that bundle and
 //! exactly one port; all document messages then use the port, with a 32 MiB byte limit.
 //! Later window frames are ignored. This transport grants no runtime credentials.
+//! Private-port managed mode preserves document identity on UI imports, refuses dirty
+//! imports unless explicitly discarded, and routes ordinary Save to native storage.
+//! Explicit exports remain downloads and never clear dirty state.
 //! Private-port frames boot read-only. Private ready includes `accessProtocol:1` and
 //! `readOnly`; `gridcraft:set-access` `{requestId, readOnly}` receives `gridcraft:access`
 //! `{requestId, readOnly}` only after applying the native guard (or `{requestId, error}`).
@@ -154,6 +157,23 @@ impl Bridge {
                 }
             }
         }));
+    }
+
+    /// Native private-port hosts own document identity and storage. Explicit
+    /// exports still use the download callback and never acknowledge a Save.
+    pub fn configure_managed_document(&self, app: &mut SheetApp, ctx: egui::Context) {
+        if !self.managed || self.port.is_none() {
+            return;
+        }
+        let bridge = self.clone();
+        app.set_managed_document_save(Some(Box::new(move || {
+            if bridge.native.borrow().len() >= 8 {
+                return Err("The native document request queue is full.".into());
+            }
+            bridge.native.borrow_mut().push(NativeRequest::RequestSave);
+            ctx.request_repaint();
+            Ok(())
+        })));
     }
 
     /// `?author=`: the host's name for the user signs new notes and comments.
@@ -349,7 +369,7 @@ impl Bridge {
 
     fn post_save(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
         let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
-        if self.managed && is_workbook(&name) {
+        if self.managed && self.port.is_none() && is_workbook(&name) {
             if self.native.borrow().len() >= 8 {
                 return Err("The native document request queue is full.".into());
             }
@@ -363,7 +383,9 @@ impl Bridge {
         let message = message(&[("type", "gridcraft:save".into()), ("name", name.as_str().into()), ("bytes", buffer.clone().into())])
             .ok_or_else(|| "couldn't build the message".to_string())?;
         self.post(&message, Some(&js_sys::Array::of1(&buffer)))?;
-        self.saved.borrow_mut().push(name);
+        if !self.managed {
+            self.saved.borrow_mut().push(name);
+        }
         Ok(())
     }
 

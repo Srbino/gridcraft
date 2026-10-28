@@ -430,6 +430,8 @@ pub type TextWidth = Arc<dyn Fn(&str, &model::Font, bool) -> f32 + Send + Sync>;
 pub struct Session {
     /// Ephemeral application access; never workbook protection or persisted data.
     read_only: bool,
+    /// Opt-in embedding owns one document identity and durable Save acknowledgements.
+    managed_document: bool,
     docs: Vec<DocState>,
     /// Index in `docs` of the active window's workbook.
     active: usize,
@@ -492,6 +494,15 @@ impl Session {
         Session::default()
     }
 
+    /// Host custody is ephemeral and never part of the serialized workbook.
+    pub fn set_managed_document(&mut self, value: bool) {
+        self.managed_document = value;
+    }
+
+    pub fn is_managed_document(&self) -> bool {
+        self.managed_document
+    }
+
     pub fn is_read_only(&self) -> bool {
         self.read_only
     }
@@ -503,7 +514,12 @@ impl Session {
     /// Trusted embedding import. This narrow operation keeps the runtime access guard
     /// set while loading bytes; ordinary file commands remain unavailable to viewers.
     pub fn import_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<Json> {
-        self.execute_command("file.open", serde_json::json!({"name":name,"base64":io::base64_encode(bytes)}), true)
+        // Trusted bootstrap creates the clean imported document whose identity the
+        // host then binds. User imports, unlike bootstrap, edit that same identity.
+        let managed = std::mem::replace(&mut self.managed_document, false);
+        let result = self.execute_command("file.open", serde_json::json!({"name":name,"base64":io::base64_encode(bytes)}), true);
+        self.managed_document = managed;
+        result
     }
 
     pub fn documents(&self) -> &[DocState] {
@@ -620,6 +636,7 @@ impl Session {
         if let Err(why) = available {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
+        let undoable = spec.undoable || self.managed_document && id == "file.open" && !trusted_import;
         let before = self.active().map(|d| (d.uid, d.wb.clone(), d.selection.clone()));
         let params = if params.is_null() { Json::Object(Default::default()) } else { params };
         let (first_group, group_epoch) = (self.next_group, self.group_epoch);
@@ -630,7 +647,7 @@ impl Session {
         // because a nested `edit.undo` removes entries. A query runs nothing that changes the
         // history (`every_query_leaves_the_history_alone` runs each one), so it needs no
         // copy; front ends run queries all the time.
-        let query = !spec.journal && !spec.undoable;
+        let query = !spec.journal && !undoable;
         let history_before = before.as_ref().filter(|_| !query).and_then(|(uid, ..)| {
             #[cfg(test)]
             tests::HISTORY_COPIES.with(|n| n.set(n.get().saturating_add(1)));
@@ -724,7 +741,7 @@ impl Session {
         let epoch_changed = self.group_epoch != group_epoch;
         let in_group_now = before.as_ref().is_some_and(|(uid, ..)| self.in_group(*uid));
         let was_open = start.is_some_and(|(was_open, _)| was_open);
-        if spec.undoable
+        if undoable
             && let Some((uid, wb, sel)) = before
             && let Some(d) = self.docs.iter_mut().find(|d| d.uid == uid)
             && !Arc::ptr_eq(&d.wb, &wb)

@@ -23,6 +23,9 @@ impl SheetApp {
                 return Err("The workbook is read-only; native drafts are retained.".into());
             }
         }
+        if self.session.is_managed_document() && matches!(id, "file.new" | "file.close" | "window.close" | "view.newWindow") {
+            return Err("The embedding host owns document creation and closing.".into());
+        }
         let switches_window = id.starts_with("window.")
             || matches!(id, "view.newWindow" | "view.hideWindow" | "view.unhideWindow")
             || (id == "view.switchWindows" && ["window", "doc"].iter().any(|k| params.get(*k).is_some_and(|d| !d.is_null())));
@@ -31,6 +34,12 @@ impl SheetApp {
         }
         if matches!(id, "file.save" | "file.saveAs" | "file.saveBytes") {
             self.store_view_state();
+        }
+        if id == "file.save"
+            && let Some(save) = &self.managed_document_save
+        {
+            save()?;
+            return Ok(json!({"managed": true}));
         }
         if matches!(
             id,
@@ -346,7 +355,7 @@ impl SheetApp {
     /// Opens the File tab's Backstage view on `page`, committing a cell still being edited first
     /// (File actions work on the whole workbook). A draft that can't be committed keeps the sheet.
     pub fn open_backstage(&mut self, page: backstage::Page) {
-        if !self.chrome.file_tab {
+        if !self.chrome.file_tab || self.session.is_managed_document() && page == backstage::Page::New {
             return;
         }
         if !self.commit_edit(0, 0, false, false) {
