@@ -304,6 +304,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     });
                 }
                 "start" => {
+                    if app.show_command("file.new") {
                     ui.heading("Start a new workbook");
                     ui.horizontal_wrapped(|ui| {
                         if ui.button("Blank workbook").clicked() {
@@ -317,6 +318,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                             }
                         }
                     });
+                    }
                     ui.separator();
                     ui.label(egui::RichText::new("Recent").strong());
                     for path in app.ui.recent.clone() {

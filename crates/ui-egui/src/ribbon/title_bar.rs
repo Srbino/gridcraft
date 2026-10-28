@@ -112,6 +112,9 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                     ("Sort A to Z", "data.sortAscending"),
                     ("Calculate Now", "formulas.calculateNow"),
                 ] {
+                    if !app.show_command(id) {
+                        continue;
+                    }
                     if ui.button(label).clicked() {
                         app.run_or_alert(id, json!({}));
                     }

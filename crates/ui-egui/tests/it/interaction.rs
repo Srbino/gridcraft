@@ -1193,3 +1193,58 @@ fn name_box_commit_preserves_a_later_cell_enter_in_the_same_batch() {
     assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(2, 1));
     assert!(h.state().cell_draft().is_none());
 }
+
+#[test]
+fn managed_lifecycle_hides_legacy_start_creation_tiles_but_keeps_recent_opening() {
+    let mut h = harness(blank());
+    h.state_mut().open_dialog("start", json!({}));
+    h.run_steps(3);
+    assert!(h.query_by_label("Blank workbook").is_some());
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert!(h.query_by_label("Blank workbook").is_none());
+    for (_, title) in gridcraft_engine::sample::SAMPLES {
+        assert!(h.query_by_label(title).is_none());
+    }
+    assert!(h.query_by_label("Recent").is_some());
+}
+
+#[test]
+fn managed_lifecycle_hides_the_rendered_view_new_window_button() {
+    fn painted(h: &egui_kittest::Harness<'static, SheetApp>, label: &str) -> bool {
+        let mut texts = Vec::new();
+        for shape in &h.output().shapes {
+            text_shapes(&shape.shape, shape.clip_rect, &mut texts);
+        }
+        texts.iter().any(|(t, clip)| t.galley.job.text == label && clip.is_positive())
+    }
+    let mut h = harness(blank());
+    h.state_mut().ui.ribbon_tab = "View".into();
+    h.run_steps(3);
+    assert!(painted(&h, "New"));
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert!(!painted(&h, "New"));
+    assert!(painted(&h, "Panes"));
+}
+
+#[test]
+fn managed_lifecycle_hides_new_workbook_from_the_actual_title_more_popup() {
+    fn more(h: &mut egui_kittest::Harness<'static, SheetApp>, x: f32) {
+        let pos = egui::pos2(x, 19.0);
+        h.input_mut().events.push(Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            h.input_mut().events.push(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+            h.run_steps(2);
+        }
+    }
+    let mut h = harness(blank());
+    more(&mut h, 270.0);
+    assert!(h.query_by_label("New Workbook").is_some(), "calibration opens the standalone popup");
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    more(&mut h, 173.0);
+    assert!(h.query_by_label("Open…").is_some(), "managed popup really opened");
+    assert!(h.query_by_label("New Workbook").is_none());
+}
