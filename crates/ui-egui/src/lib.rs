@@ -206,6 +206,7 @@ pub struct SheetApp {
     pub editor: Option<editor::EditState>,
     pub text_box_editor: Option<text_box::EditState>,
     held_drafts: Option<HeldDrafts>,
+    native_snapshot_group: Option<app::native_snapshot::NativeSnapshotGroup>,
     pub dialog: Option<dialogs::Dialog>,
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,

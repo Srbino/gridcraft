@@ -103,6 +103,12 @@ impl SheetApp {
         };
         // F2 then Enter (or a file command) on an untouched draft: nothing to write.
         if !fill_selection && !array && ed.original.as_ref() == Some(&text) {
+            if let Err(error) = self.finish_native_snapshot_owner(super::native_snapshot::NativeSnapshotOwner::cell(&ed), false) {
+                self.message = Some(("GridCraft".into(), error));
+                self.editor = Some(ed);
+                self.session.mode = gridcraft_engine::Mode::Edit;
+                return false;
+            }
             if dr != 0 || dc != 0 {
                 self.move_after_enter(dr, dc);
             }
@@ -159,6 +165,12 @@ impl SheetApp {
         };
         match r {
             Ok(_) => {
+                if let Err(error) = self.finish_native_snapshot_owner(super::native_snapshot::NativeSnapshotOwner::cell(&ed), false) {
+                    self.message = Some(("GridCraft".into(), error));
+                    self.editor = Some(ed);
+                    self.session.mode = gridcraft_engine::Mode::Edit;
+                    return false;
+                }
                 if dr != 0 || dc != 0 {
                     self.move_after_enter(dr, dc);
                 }
@@ -184,7 +196,13 @@ impl SheetApp {
     }
 
     pub fn cancel_edit(&mut self) {
-        self.editor = None;
+        if let Some(edit) = self.editor.take()
+            && let Err(error) = self.finish_native_snapshot_owner(super::native_snapshot::NativeSnapshotOwner::cell(&edit), true)
+        {
+            self.editor = Some(edit);
+            self.message = Some(("GridCraft".into(), error));
+            return;
+        }
         self.session.mode = gridcraft_engine::Mode::Ready;
     }
 
