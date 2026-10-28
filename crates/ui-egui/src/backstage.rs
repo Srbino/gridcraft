@@ -177,7 +177,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             }
             ui.add_space(10.0);
             for page in [Page::Home, Page::New, Page::Open] {
-                if page == Page::New && app.session.is_managed_document() {
+                if page == Page::New && !app.show_command("file.new") {
                     continue;
                 }
                 if nav_item(ui, page.icon(), lang.tr(page.label()), bs.page == page, nav_text, nav_sel).clicked() {
@@ -196,7 +196,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     out.page = Some(page);
                 }
             }
-            if !app.session.is_managed_document() && nav_item(ui, Icon::Close, lang.tr("Close"), false, nav_text, nav_sel).clicked() {
+            if app.show_command("file.close") && nav_item(ui, Icon::Close, lang.tr("Close"), false, nav_text, nav_sel).clicked() {
                 // A cell still being edited is part of the workbook; Close keeps the unsaved prompt.
                 if app.commit_edit(0, 0, false, false) {
                     app.run_or_alert("file.close", json!({}));
@@ -343,7 +343,7 @@ fn tile(ui: &mut Ui, label: &str, sample: Option<usize>) -> egui::Response {
 
 /// Blank workbook and the built-in samples.
 fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
-    if app.session.is_managed_document() {
+    if !app.show_command("file.new") {
         return;
     }
     let lang = app.ui.language;

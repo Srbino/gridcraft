@@ -210,10 +210,15 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) -> Rect {
     }
     if resp.lost_focus() {
         if ui.input(|i| i.key_pressed(Key::Enter)) {
-            // The Enter that commits the Name Box is used up here. Left in the frame's input, the
-            // grid (drawn after the formula bar, and focused again now the box let go) would read
-            // it as its own Enter and move the active cell one row down from the jump target (#247).
-            ui.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: Key::Enter, .. })));
+            // The Name Box owns the events through its committing Enter, including
+            // text already consumed by TextEdit in this same frame. The grid is
+            // drawn next: retaining that text would start a cell edit with the
+            // last address characters. New events after Enter belong to the grid.
+            ui.input_mut(|i| {
+                if let Some(commit) = i.events.iter().position(|e| matches!(e, egui::Event::Key { key: Key::Enter, pressed: true, .. })) {
+                    i.events.drain(..=commit);
+                }
+            });
             let target = text.trim().to_string();
             if !target.is_empty() && target != shown {
                 // A new name for the selection, or a place to go.

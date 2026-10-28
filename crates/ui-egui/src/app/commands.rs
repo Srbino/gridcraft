@@ -355,7 +355,7 @@ impl SheetApp {
     /// Opens the File tab's Backstage view on `page`, committing a cell still being edited first
     /// (File actions work on the whole workbook). A draft that can't be committed keeps the sheet.
     pub fn open_backstage(&mut self, page: backstage::Page) {
-        if !self.chrome.file_tab || self.session.is_managed_document() && page == backstage::Page::New {
+        if !self.chrome.file_tab || !self.show_command("file.new") && page == backstage::Page::New {
             return;
         }
         if !self.commit_edit(0, 0, false, false) {

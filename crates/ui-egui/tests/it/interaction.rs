@@ -1131,3 +1131,65 @@ fn header_footer_dialog_opens_on_the_saved_header_and_footer() {
     let pr = &h.state().session.active().unwrap().wb.active().unwrap().print;
     assert_eq!((pr.header.as_str(), pr.footer.as_str()), ("&CNew", "&CConfidential"));
 }
+
+#[test]
+fn name_box_commit_consumes_its_coalesced_text_before_grid_input() {
+    let mut h = harness(blank());
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("gridcraft.name_box")));
+    h.run_steps(2);
+    key(&mut h, Key::A, Modifiers::COMMAND);
+    h.input_mut().events.extend([
+        Event::Text("B".into()),
+        Event::Text("2".into()),
+        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+        Event::Key { key: Key::Enter, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(1, 1));
+    assert!(h.state().cell_draft().is_none(), "Name Box text must not start a cell edit after its Enter");
+    text(&mut h, "2");
+    text(&mut h, "1");
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert_eq!(value(&h, "B2"), Value::Number(21.0));
+}
+
+#[test]
+fn name_box_commit_preserves_new_cell_text_after_its_enter_in_the_same_batch() {
+    let mut h = harness(blank());
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("gridcraft.name_box")));
+    h.run_steps(2);
+    key(&mut h, Key::A, Modifiers::COMMAND);
+    h.input_mut().events.extend([
+        Event::Text("B".into()),
+        Event::Text("2".into()),
+        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+        Event::Key { key: Key::Enter, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+        Event::Text("9".into()),
+    ]);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(1, 1));
+    assert_eq!(h.state().cell_draft().unwrap().text, "9");
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert_eq!(value(&h, "B2"), Value::Number(9.0));
+}
+
+#[test]
+fn name_box_commit_preserves_a_later_cell_enter_in_the_same_batch() {
+    let mut h = harness(blank());
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("gridcraft.name_box")));
+    h.run_steps(2);
+    key(&mut h, Key::A, Modifiers::COMMAND);
+    h.input_mut().events.extend([
+        Event::Text("B".into()),
+        Event::Text("2".into()),
+        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+        Event::Key { key: Key::Enter, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+        Event::Text("9".into()),
+        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+        Event::Key { key: Key::Enter, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+    ]);
+    h.run_steps(2);
+    assert_eq!(value(&h, "B2"), Value::Number(9.0));
+    assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(2, 1));
+    assert!(h.state().cell_draft().is_none());
+}

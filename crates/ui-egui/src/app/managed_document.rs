@@ -1,6 +1,18 @@
 use super::*;
 
 impl SheetApp {
+    /// Keep the host-owned lifecycle and unsupported clipboard reads out of
+    /// every UI command surface. Engine introspection remains unchanged.
+    pub(crate) fn show_command(&self, id: &str) -> bool {
+        if !self.session.is_managed_document() {
+            return true;
+        }
+        if matches!(id, "file.new" | "file.close" | "window.close" | "view.newWindow") {
+            return false;
+        }
+        !matches!(id, "edit.paste" | "edit.pasteSpecial" | "ui:pasteSpecial" | "dialog:pasteSpecial") || self.services.paste_text.is_some()
+    }
+
     /// Opt-in host document custody: the callback requests durable native Save;
     /// it never acknowledges storage or turns a download into Saved.
     pub fn set_managed_document_save(&mut self, handler: Option<Box<dyn Fn() -> Result<(), String>>>) {

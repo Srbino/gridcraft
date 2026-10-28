@@ -183,6 +183,10 @@ Ordinary Save requests native host storage; Save As and explicit exports send
 `gridcraft:save` download bytes without changing the saved baseline. Downloads
 never substitute for the exact native save acknowledgement. Standalone and
 legacy parent document lifecycle remain unchanged.
+Managed hosts without a clipboard-read service omit toolbar and context-menu
+Paste actions, which could otherwise paste stale internal data after the OS
+clipboard changes. User-triggered Ctrl/Cmd+V paste events remain supported;
+Copy can use separately delegated clipboard-write without clipboard-read.
 
 Private-port hosts start read-only before the first interactive frame, including when the
 `readonly` query is missing or `0`; `readonly=1` explicitly documents that boot intent.
