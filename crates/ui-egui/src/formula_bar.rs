@@ -224,12 +224,19 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) -> Rect {
                 // A new name for the selection, or a place to go.
                 let is_ref = gridcraft_engine::core::RangeRef::parse(target.split('!').next_back().unwrap_or("")).is_some();
                 let known = app.session.active().is_some_and(|d| d.wb.name(&target, d.wb.active_sheet()).is_some() || d.wb.table(&target).is_some());
-                let r = if is_ref || known {
-                    app.run("edit.goTo", json!({"reference": target}))
-                } else {
-                    app.run("formulas.defineName", json!({"name": target}))
-                };
-                if let Err(e) = r {
+                // Explicit navigation settles the old editor before moving its
+                // selection. Viewing navigation must leave parked drafts held.
+                let settled = if app.is_read_only() { Ok(()) } else { app.settle_drafts() };
+                let r = settled.and_then(|()| {
+                    if is_ref || known {
+                        app.run("edit.goTo", json!({"reference": target}))
+                    } else {
+                        app.run("formulas.defineName", json!({"name": target}))
+                    }
+                });
+                if let Err(e) = r
+                    && app.message.is_none()
+                {
                     app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
                 }
                 app.grid.ensure_visible = true;

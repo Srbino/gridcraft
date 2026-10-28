@@ -1300,3 +1300,69 @@ fn coalesced_initial_text_keeps_following_tab_arrow_and_escape_semantics() {
         assert!(h.state().cell_draft().is_none(), "{control:?}");
     }
 }
+
+fn name_box_go_to(h: &mut egui_kittest::Harness<'static, SheetApp>, target: &str) {
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("gridcraft.name_box")));
+    h.run_steps(2);
+    key(h, Key::A, Modifiers::COMMAND);
+    h.input_mut().events.push(Event::Text(target.into()));
+    h.run_steps(2);
+    key(h, Key::Enter, Modifiers::NONE);
+    h.run_steps(2);
+}
+
+#[test]
+fn name_box_navigation_settles_a_valid_existing_cell_or_formula_draft() {
+    for (draft, expected) in [("Rank", Value::text("Rank")), ("=21*2", Value::Number(42.0))] {
+        let mut h = harness(blank());
+        h.state_mut().run("selection.set", json!({"cell":"A5"})).unwrap();
+        h.state_mut().begin_edit(Some(draft.into()), false);
+        h.run_steps(3);
+        name_box_go_to(&mut h, "B5");
+        assert_eq!(value(&h, "A5"), expected);
+        assert_eq!(h.state().session.active().unwrap().selection.active.a1(), "B5");
+        assert!(h.state().editor.is_none());
+        text(&mut h, "Label");
+        key(&mut h, Key::Enter, Modifiers::NONE);
+        assert_eq!(value(&h, "B5"), Value::text("Label"));
+    }
+}
+
+#[test]
+fn name_box_navigation_refuses_an_invalid_draft_without_changing_selection_or_text() {
+    let mut h = harness(blank());
+    h.state_mut().run("selection.set", json!({"cell":"A5"})).unwrap();
+    h.state_mut().begin_edit(Some("=1+".into()), false);
+    h.run_steps(3);
+    let before = h.state().session.active().unwrap().wb.clone();
+    name_box_go_to(&mut h, "B5");
+    assert_eq!(h.state().session.active().unwrap().selection.active.a1(), "A5");
+    assert_eq!(h.state().cell_draft().unwrap().text, "=1+");
+    assert!(std::sync::Arc::ptr_eq(&before, &h.state().session.active().unwrap().wb));
+    assert!(h.state().message.is_some());
+}
+
+#[test]
+fn name_box_readonly_navigation_does_not_flush_held_cell_or_textbox_drafts() {
+    for text_box in [false, true] {
+        let mut h = harness(blank());
+        if text_box {
+            let id = h.state_mut().run("insert.textBox", json!({"at":"D8","text":"original"})).unwrap()["shape"].as_u64().unwrap() as u32;
+            h.state_mut().begin_text_box_edit(id);
+            h.state_mut().text_box_editor.as_mut().unwrap().text = "held textbox".into();
+        } else {
+            h.state_mut().begin_edit(Some("held cell".into()), false);
+        }
+        h.state_mut().set_read_only(true);
+        let before = h.state().session.active().unwrap().wb.clone();
+        name_box_go_to(&mut h, "B5");
+        assert_eq!(h.state().session.active().unwrap().selection.active.a1(), "B5");
+        assert!(std::sync::Arc::ptr_eq(&before, &h.state().session.active().unwrap().wb), "viewing cannot materialize native draft content");
+        assert!(h.state().editor.is_none() && h.state().text_box_editor.is_none());
+        if text_box {
+            assert_eq!(h.state().text_box_draft().unwrap().text, "held textbox");
+        } else {
+            assert_eq!(h.state().cell_draft().unwrap().text, "held cell");
+        }
+    }
+}
