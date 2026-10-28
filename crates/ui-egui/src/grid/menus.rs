@@ -5,6 +5,10 @@ use super::*;
 
 /// Draws the filter-header popup: sort, search/select-all, apply/clear, a lazily installed table autofilter, new-open search focus and dismissal.
 pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool) {
+    if app.is_read_only() {
+        app.grid.filter_menu = None;
+        return;
+    }
     let Some((col, row, at)) = app.grid.filter_menu else { return };
     let Some(d) = app.session.active() else { return };
     let wb = d.wb.clone();

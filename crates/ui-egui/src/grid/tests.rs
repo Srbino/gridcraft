@@ -304,3 +304,27 @@ fn upward_text_with_middle_align_is_centred_in_a_merged_block() {
     assert!((bb.center().y - rect.center().y).abs() < 0.01, "{bb:?} not centred in {rect:?}");
     assert!((bb.center().x - rect.center().x).abs() < 0.01, "{bb:?} not centred in {rect:?}");
 }
+
+#[test]
+fn readonly_filter_popup_never_installs_an_autofilter_via_direct_fallback() {
+    let mut session = gridcraft_engine::Session::new();
+    session.new_workbook();
+    let mut app = crate::SheetApp::new(session, crate::Services::default());
+    app.run("cell.set", json!({"cell":"A1","input":"Header"})).unwrap();
+    app.run("cell.set", json!({"cell":"A2","input":"Value"})).unwrap();
+    app.run("insert.table", json!({"range":"A1:A2","header":true})).unwrap();
+    let doc = app.session.active_mut().unwrap();
+    Arc::make_mut(&mut doc.wb).sheet_mut(0).unwrap().autofilter = None;
+    let before = doc.wb.clone();
+    let geo = Geo::new(before.active().unwrap(), egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0)), egui::Vec2::ZERO);
+    app.set_read_only(true);
+    app.grid.filter_menu = Some((0, 0, egui::pos2(100.0, 100.0)));
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| super::menus::filter_menu(&mut app, ui, &geo, true));
+    output.textures_delta.clear();
+    assert!(
+        Arc::ptr_eq(&before, &app.session.active().unwrap().wb),
+        "opening a viewing-mode filter popup must never bypass the registry to install mutable autofilter state"
+    );
+    assert!(app.session.active().unwrap().wb.active().unwrap().autofilter.is_none());
+}

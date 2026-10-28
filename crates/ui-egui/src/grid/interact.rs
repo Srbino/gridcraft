@@ -27,6 +27,7 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
     let in_col_header = pos.is_some_and(|p| p.y < geo.cells.top() && p.y >= geo.head_top() && p.x >= geo.cells.left());
     let in_row_header = pos.is_some_and(|p| p.x < geo.cells.left() && p.x >= geo.head_left() && p.y >= geo.cells.top());
     let in_corner = pos.is_some_and(|p| p.x < geo.cells.left() && p.y < geo.cells.top() && p.x >= geo.head_left() && p.y >= geo.head_top());
+    let editable = !app.is_read_only();
     let sel = app.session.active().map(|d| d.selection.clone()).unwrap_or_default();
     let cur_rect = geo.range_rect(sh, sel.current());
     let handle = Rect::from_center_size(cur_rect.right_bottom(), vec2(9.0, 9.0));
@@ -34,8 +35,8 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
     // over the frozen rows/columns that a scrolled selection lies under.
     let handle_panes = geo.range_panes(RangeRef::cell(sel.current().end));
     let border_panes = geo.range_panes(sel.current());
-    let on_handle = |p: Pos2| handle.contains(p) && handle_panes.iter().any(|r| r.contains(p));
-    let on_cur_border = |p: Pos2| on_border(cur_rect, p) && border_panes.iter().any(|r| r.contains(p));
+    let on_handle = |p: Pos2| editable && handle.contains(p) && handle_panes.iter().any(|r| r.contains(p));
+    let on_cur_border = |p: Pos2| editable && on_border(cur_rect, p) && border_panes.iter().any(|r| r.contains(p));
 
     let (freeze_cols, freeze_rows) = freeze_handles(geo);
     // Draw tab tools: the pen records a stroke, the eraser deletes ink under the pointer.
@@ -121,7 +122,7 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
             if kind == "chart" && resp.double_clicked() {
                 app.grid.pane = Some("formatChart".into());
             }
-            if primary_drag {
+            if primary_drag && editable {
                 let a = object_anchor(sh, kind, id);
                 let resize = (p - rect.right_bottom()).length() < OBJECT_RESIZE_RADIUS;
                 if let Some(a) = a {
@@ -145,7 +146,8 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
     }
 
     // A double-click is also a click: handle header AutoFit before resize setup returns.
-    if resp.double_clicked()
+    if editable
+        && resp.double_clicked()
         && let Some(p) = pos
     {
         let unhide = if in_col_header {
@@ -212,7 +214,7 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
             return;
         }
         // Freeze handles sit on the header edges (and the corner's edges when nothing is frozen).
-        if freeze_cols.contains(p) || freeze_rows.contains(p) {
+        if editable && (freeze_cols.contains(p) || freeze_rows.contains(p)) {
             app.grid.drag = Drag::Freeze { cols: freeze_cols.contains(p), to: None };
             return;
         }
@@ -221,7 +223,7 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
             return;
         }
         if in_col_header {
-            if let Some((c, x)) = col_edge(geo, sh, p.x) {
+            if let Some((c, x)) = col_edge(geo, sh, p.x).filter(|_| editable) {
                 app.grid.drag = Drag::ResizeCol { col: c, start: p.x, orig: sh.col_width(c).max(0.0) * 0.0 + (x - geo.x(sh, c)) / geo.z };
                 return;
             }
@@ -235,7 +237,8 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
                 return;
             }
             // An armed Format Painter paints the columns dragged over instead of moving them.
-            if resp.drag_started()
+            if editable
+                && resp.drag_started()
                 && !mods.any()
                 && app.session.format_painter.is_none()
                 && sel.ranges.len() == 1
@@ -251,7 +254,7 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
             return;
         }
         if in_row_header {
-            if let Some((r, y)) = row_edge(geo, sh, p.y) {
+            if let Some((r, y)) = row_edge(geo, sh, p.y).filter(|_| editable) {
                 app.grid.drag = Drag::ResizeRow { row: r, start: p.y, orig: (y - geo.y(sh, r)) / geo.z };
                 return;
             }
@@ -269,14 +272,14 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
         }
         let c = geo.cell_at(sh, p);
         // Data validation list arrow next to the active cell.
-        if let Some(r) = validation_arrow(sh, geo, sel.active)
+        if let Some(r) = validation_arrow(sh, geo, sel.active).filter(|_| editable)
             && r.contains(p)
         {
             app.grid.list_picker = Some(sel.active);
             return;
         }
         // Filter dropdown buttons.
-        if is_filter_button(sh, geo, p) {
+        if editable && is_filter_button(sh, geo, p) {
             app.grid.filter_menu = Some((c.col, c.row, geo.mirror_pos(p)));
             return;
         }

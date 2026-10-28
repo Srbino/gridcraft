@@ -3,6 +3,7 @@ use super::services::{Chrome, Services};
 use super::state::{NoticeKind, OpenWindow, SaveAnswer, SheetView};
 use super::*;
 
+mod access;
 mod clipboard;
 mod commands;
 mod editing;
@@ -25,6 +26,7 @@ impl SheetApp {
             views: HashMap::new(),
             editor: None,
             text_box_editor: None,
+            held_drafts: None,
             dialog: None,
             backstage: None,
             message: None,

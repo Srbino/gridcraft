@@ -12,14 +12,12 @@ struct Fingerprint {
 }
 
 fn changed_cell(app: &SheetApp) -> bool {
-    app.editor.as_ref().is_some_and(|edit| edit.original.as_ref().is_none_or(|original| original != &edit.text))
+    app.cell_draft().is_some_and(|edit| edit.original.as_ref().is_none_or(|original| original != &edit.text))
 }
 
 /// Draft buffers are native editor state, not yet part of `DocState::wb`.
 pub fn dirty(app: &SheetApp) -> bool {
-    app.session.documents().iter().any(|doc| doc.is_dirty())
-        || changed_cell(app)
-        || app.text_box_editor.as_ref().is_some_and(|edit| edit.is_modified())
+    app.session.documents().iter().any(|doc| doc.is_dirty()) || app.has_unsaved_drafts()
 }
 
 /// Constant-size activity state: never clone or retain an input-sized draft.

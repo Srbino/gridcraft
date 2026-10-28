@@ -428,6 +428,8 @@ pub type TextWidth = Arc<dyn Fn(&str, &model::Font, bool) -> f32 + Send + Sync>;
 
 #[derive(Default)]
 pub struct Session {
+    /// Ephemeral application access; never workbook protection or persisted data.
+    read_only: bool,
     docs: Vec<DocState>,
     /// Index in `docs` of the active window's workbook.
     active: usize,
@@ -489,6 +491,21 @@ impl Session {
     pub fn new() -> Session {
         Session::default()
     }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub fn set_read_only(&mut self, value: bool) {
+        self.read_only = value;
+    }
+
+    /// Trusted embedding import. This narrow operation keeps the runtime access guard
+    /// set while loading bytes; ordinary file commands remain unavailable to viewers.
+    pub fn import_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<Json> {
+        self.execute_command("file.open", serde_json::json!({"name":name,"base64":io::base64_encode(bytes)}), true)
+    }
+
     pub fn documents(&self) -> &[DocState] {
         &self.docs
     }
@@ -594,8 +611,13 @@ impl Session {
     /// unless an undo group is open on the document (the group then makes the step).
     /// Panics inside commands are caught and reported; the workbook is restored.
     pub fn execute(&mut self, id: &str, params: Json) -> Result<Json> {
+        self.execute_command(id, params, false)
+    }
+
+    fn execute_command(&mut self, id: &str, params: Json, trusted_import: bool) -> Result<Json> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
-        if let Err(why) = (spec.enabled)(self) {
+        let available = if trusted_import && id == "file.open" { (spec.enabled)(self) } else { spec.availability(self) };
+        if let Err(why) = available {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
         let before = self.active().map(|d| (d.uid, d.wb.clone(), d.selection.clone()));

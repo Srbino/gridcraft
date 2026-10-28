@@ -14,6 +14,15 @@ impl SheetApp {
     }
 
     pub(super) fn run_command(&mut self, id: &str, params: Json) -> Result<Json, String> {
+        // Refuse before file/window commands can settle native drafts.
+        if self.is_read_only() {
+            if let Some(spec) = gridcraft_engine::find_command(id) {
+                spec.availability(&self.session)?;
+            }
+            if id.starts_with("file.") && self.has_pending_drafts() {
+                return Err("The workbook is read-only; native drafts are retained.".into());
+            }
+        }
         let switches_window = id.starts_with("window.")
             || matches!(id, "view.newWindow" | "view.hideWindow" | "view.unhideWindow")
             || (id == "view.switchWindows" && ["window", "doc"].iter().any(|k| params.get(*k).is_some_and(|d| !d.is_null())));
@@ -37,7 +46,8 @@ impl SheetApp {
                 | "edit.redo"
                 | "object.delete"
                 | "object.move"
-        ) {
+        ) && !self.is_read_only()
+        {
             self.commit_text_box_edit()?;
         }
         if let Some(r) = self.run_ui_command(id, &params) {
@@ -277,7 +287,9 @@ impl SheetApp {
     }
 
     pub fn open_dialog(&mut self, name: &str, params: Json) {
-        if let Err(e) = self.commit_text_box_edit() {
+        if !self.is_read_only()
+            && let Err(e) = self.commit_text_box_edit()
+        {
             self.message = Some(("Text Box".into(), clean_error(&e)));
             return;
         }

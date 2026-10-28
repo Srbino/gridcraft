@@ -187,6 +187,15 @@ pub struct Perf {
     last: f64,
 }
 
+/// Native editor buffers suspended while an embedding host grants viewing access.
+/// Moving these Options preserves the complete text/caret state without copying it.
+#[derive(Default)]
+struct HeldDrafts {
+    cell: Option<editor::EditState>,
+    text_box: Option<text_box::EditState>,
+    mode: gridcraft_engine::Mode,
+}
+
 pub struct SheetApp {
     pub session: Session,
     pub ui: UiState,
@@ -196,6 +205,7 @@ pub struct SheetApp {
     pub views: HashMap<(u64, usize), SheetView>,
     pub editor: Option<editor::EditState>,
     pub text_box_editor: Option<text_box::EditState>,
+    held_drafts: Option<HeldDrafts>,
     pub dialog: Option<dialogs::Dialog>,
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,

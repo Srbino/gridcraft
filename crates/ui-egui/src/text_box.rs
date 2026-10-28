@@ -31,6 +31,9 @@ pub(crate) fn editor_id() -> egui::Id {
 
 impl SheetApp {
     pub fn begin_text_box_edit(&mut self, id: u32) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
         if !self.commit_edit(0, 0, false, false) {
             return false;
         }
@@ -65,6 +68,9 @@ impl SheetApp {
     }
 
     pub fn commit_text_box_edit(&mut self) -> Result<(), String> {
+        if self.is_read_only() && self.text_box_draft().is_some() {
+            return Err("The workbook is read-only; the text-box draft is retained.".into());
+        }
         let Some(ed) = self.text_box_editor.take() else { return Ok(()) };
         let result = if self.view_key() != Some((ed.uid, ed.sheet)) {
             Err("The text box's worksheet is no longer active.".into())

@@ -65,6 +65,11 @@ pub fn start() {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
                     }
                     let mut app = SheetApp::new(session, services);
+                    // A private-port embedding never starts writable, even with a missing/false
+                    // query. Only its bound host can unlock it after proving current write access.
+                    let read_only =
+                        crate::host_access::initial_read_only(query_param("host").as_deref() == Some("port"), query_param("readonly").as_deref());
+                    app.set_read_only(read_only);
                     app.ui.system_theme = true;
                     // `?chrome=none|notitlebar|nofiletab`: a host that embeds the sheet in its own window and owns the files
                     // can leave the title bar and/or the File tab undrawn (`Chrome`, #1877). An unknown value keeps
@@ -143,6 +148,9 @@ fn stored(key: &str) -> Option<String> {
 
 impl eframe::App for WebShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(bridge) = &self.bridge {
+            bridge.apply_access(&mut self.app, ctx);
+        }
         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
         for f in dropped {
             let inbox = self.inbox.clone();
@@ -177,10 +185,16 @@ impl eframe::App for WebShell {
 
     /// Forwards a browser frame's raw input to the shared app before eframe handles it.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(bridge) = &self.bridge {
+            bridge.apply_access(&mut self.app, ctx);
+        }
         self.app.raw_input_hook(ctx, raw);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Some(bridge) = &self.bridge {
+            bridge.apply_access(&mut self.app, ui.ctx());
+        }
         self.app.ui(ui);
         if let Some(bridge) = &self.bridge {
             bridge.sync(&mut self.app);

@@ -60,8 +60,81 @@ pub struct CommandInfo {
 }
 
 impl CommandSpec {
+    /// Runtime access is separate from workbook/sheet protection and is never serialized.
+    pub fn availability(&self, s: &Session) -> std::result::Result<(), String> {
+        // Query metadata describes journaling, not write authority: even a query can
+        // mutate native state (for example formulas.watchWindow writes the workbook stash).
+        // New commands stay disabled until their read-only behavior has been reviewed.
+        let viewing = matches!(
+            self.id,
+            "app.commands"
+                | "arrange.selectionPane"
+                | "automate.allScripts"
+                | "cell.get"
+                | "data.queriesConnections"
+                | "data.scenarioManager"
+                | "data.validate"
+                | "document.inspect"
+                | "file.options"
+                | "file.printPreview"
+                | "file.saveBytes"
+                | "formulas.dateTime"
+                | "formulas.errorChecking"
+                | "formulas.evaluate"
+                | "formulas.evaluateFormula"
+                | "formulas.financial"
+                | "formulas.functions"
+                | "formulas.logical"
+                | "formulas.lookupReference"
+                | "formulas.mathTrig"
+                | "formulas.moreFunctions"
+                | "formulas.nameManager"
+                | "formulas.recentlyUsed"
+                | "formulas.text"
+                | "formulas.traceDependents"
+                | "formulas.tracePrecedents"
+                | "history.list"
+                | "home.addIns"
+                | "insert.chartRecommendations"
+                | "pivot.fieldList"
+                | "pivot.fields"
+                | "pivot.list"
+                | "review.checkAccessibility"
+                | "review.showAllNotes"
+                | "review.showComments"
+                | "review.spelling"
+                | "review.thesaurus"
+                | "review.workbookStatistics"
+                | "selection.stats"
+                | "sheet.read"
+                | "view.formulaBar"
+                | "view.macros"
+                | "view.statusBar"
+                | "window.list"
+                | "selection.set"
+                | "selection.move"
+                | "selection.next"
+                | "selection.currentRegion"
+                | "selection.row"
+                | "selection.column"
+                | "edit.copy"
+                | "edit.find"
+                | "edit.goTo"
+                | "edit.goToSpecial"
+                | "sheet.activate"
+                | "sheet.next"
+                | "sheet.previous"
+                | "window.activate"
+                | "view.switchWindows"
+        );
+        if s.is_read_only() && !viewing {
+            return Err("the workbook is read-only".into());
+        }
+        (self.enabled)(s)
+    }
+
     pub fn info(&self, s: &Session) -> CommandInfo {
-        let e = (self.enabled)(s);
+        let e = self.availability(s);
         CommandInfo {
             id: self.id,
             label: self.label,

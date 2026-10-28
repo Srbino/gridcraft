@@ -3,6 +3,9 @@ use super::*;
 impl SheetApp {
     /// Starts editing the active cell. `text` replaces the content (typing) or pre-fills it.
     pub fn begin_edit(&mut self, text: Option<String>, from_formula_bar: bool) {
+        if self.is_read_only() {
+            return;
+        }
         // The source formula is display-only on spill children. Grid replacement keeps its
         // existing behavior, but no formula-bar entry path may edit that displayed formula.
         if from_formula_bar && formula_bar::active_spill_anchor(self).is_some() {
@@ -50,6 +53,9 @@ impl SheetApp {
     /// showing, that window stays active afterwards; a draft its own workbook refuses
     /// (validation, a bad formula) brings its window back to the front with the draft still open.
     pub fn commit_edit(&mut self, dr: i64, dc: i64, array: bool, fill_selection: bool) -> bool {
+        if self.is_read_only() {
+            return !self.has_pending_drafts();
+        }
         let Some((doc, window)) = self.editor.as_ref().map(|ed| (ed.doc, ed.window)) else { return true };
         if !self.draft_elsewhere() {
             return self.commit_edit_here(dr, dc, array, fill_selection);

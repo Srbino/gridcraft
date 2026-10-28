@@ -8,13 +8,14 @@
 
 use gridcraft_engine::core::CellRef;
 
-use crate::{Notice, SheetApp, backstage, dialogs, editor, grid, keytips, text_box};
+use crate::{HeldDrafts, Notice, SheetApp, backstage, dialogs, editor, grid, keytips, text_box};
 
 /// One window's parked interface state (see the module docs).
 #[derive(Default)]
 pub struct WindowUi {
     editor: Option<editor::EditState>,
     text_box_editor: Option<text_box::EditState>,
+    held_drafts: Option<HeldDrafts>,
     dialog: Option<dialogs::Dialog>,
     backstage: Option<backstage::Backstage>,
     message: Option<(String, String)>,
@@ -31,6 +32,30 @@ pub struct WindowUi {
 }
 
 impl WindowUi {
+    pub(crate) fn can_resume_drafts(&self) -> bool {
+        !self.held_drafts.as_ref().is_some_and(|held| held.pending()) || self.editor.is_none() && self.text_box_editor.is_none()
+    }
+
+    pub(crate) fn set_draft_access(&mut self, value: bool) {
+        HeldDrafts::change_access(&mut self.editor, &mut self.text_box_editor, &mut self.mode, &mut self.held_drafts, value);
+        if value {
+            self.grid.drag = grid::Drag::None;
+            self.grid.list_picker = None;
+            self.grid.filter_menu = None;
+            self.grid.fill_menu = None;
+        }
+    }
+
+    pub(crate) fn has_pending_drafts(&self) -> bool {
+        self.editor.is_some() || self.text_box_editor.is_some() || self.held_drafts.as_ref().is_some_and(|held| held.pending())
+    }
+
+    pub(crate) fn has_unsaved_drafts(&self) -> bool {
+        self.editor.as_ref().is_some_and(|edit| edit.original.as_ref().is_none_or(|original| original != &edit.text))
+            || self.text_box_editor.as_ref().is_some_and(|edit| edit.is_modified())
+            || self.held_drafts.as_ref().is_some_and(|held| held.modified())
+    }
+
     /// A new window's state. The last border, fill and font colour picked carry over, as they are
     /// the user's recent choices rather than the window's.
     fn fresh(like: &grid::GridState) -> WindowUi {
@@ -53,6 +78,7 @@ impl SheetApp {
         let WindowUi {
             editor,
             text_box_editor,
+            held_drafts,
             dialog,
             backstage,
             message,
@@ -68,6 +94,7 @@ impl SheetApp {
         } = w;
         std::mem::swap(&mut self.editor, editor);
         std::mem::swap(&mut self.text_box_editor, text_box_editor);
+        std::mem::swap(&mut self.held_drafts, held_drafts);
         std::mem::swap(&mut self.dialog, dialog);
         std::mem::swap(&mut self.backstage, backstage);
         std::mem::swap(&mut self.message, message);

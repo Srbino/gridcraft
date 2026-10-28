@@ -172,6 +172,25 @@ port, including transferred ArrayBuffer bytes up to 32 MiB. Subsequent window me
 ignored. The origin and bundle handshake bind the transport; they grant no storage authority
 or runtime credentials. The legacy `host=parent` mode retains its existing same-origin policy.
 
+Private-port hosts start read-only before the first interactive frame, including when the
+`readonly` query is missing or `0`; `readonly=1` explicitly documents that boot intent.
+The private `gridcraft:ready` includes `accessProtocol:1` and the actual `readOnly` state.
+After proving current write access, the host may send `gridcraft:set-access` with a fresh
+`requestId` and boolean `readOnly`. `gridcraft:access` echoes the request id and actual
+`readOnly` only after the native guard is applied; invalid or overlapping requests return
+`requestId` and `error`. Access requests on the window channel or legacy bridge are ignored.
+The host owns authorization, durable storage and fail-closed handling of a missing/mismatched
+acknowledgement; the editor's viewing mode is not a storage authorization mechanism.
+
+Viewing access keeps selection, scrolling, Copy and Find available while mutation commands
+are disabled. System clipboard publication still obeys browser permissions policy; opaque hosts
+can separately delegate clipboard-write without granting clipboard-read. Cell and text-box drafts, including parked-window caret state, are held without
+committing or copying their buffers, and restored only when editing access is applied.
+Native export refuses held drafts instead of silently returning an older workbook.
+A trusted correlated host import can load a clean workbook while the guard stays read-only;
+it refuses any unsaved workbook or pending draft. Workbook/sheet protection and serialized
+native document data are unchanged by access transitions. Legacy defaults remain writable.
+
 ### Ribbon access keys
 
 Press and release **left Alt** on Windows/Linux/BSD, or press **F10** on any platform,

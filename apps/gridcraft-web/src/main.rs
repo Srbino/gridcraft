@@ -21,6 +21,8 @@ mod draft_state;
 #[cfg(target_arch = "wasm32")]
 mod host;
 #[cfg(any(target_arch = "wasm32", test))]
+mod host_access;
+#[cfg(any(target_arch = "wasm32", test))]
 mod managed_save;
 #[cfg(any(target_arch = "wasm32", test))]
 mod native_document;

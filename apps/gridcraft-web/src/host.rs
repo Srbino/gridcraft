@@ -34,6 +34,11 @@
 //! path segment. The exact parent and origin must connect with that bundle and
 //! exactly one port; all document messages then use the port, with a 32 MiB byte limit.
 //! Later window frames are ignored. This transport grants no runtime credentials.
+//! Private-port frames boot read-only. Private ready includes `accessProtocol:1` and
+//! `readOnly`; `gridcraft:set-access` `{requestId, readOnly}` receives `gridcraft:access`
+//! `{requestId, readOnly}` only after applying the native guard (or `{requestId, error}`).
+//! The host proves write authority before requesting false. Pending native drafts are held
+//! without commit and viewing remains usable; access is never persisted as workbook protection.
 //!
 //! In legacy window mode, only the parent on the page's own origin is heard or answered. In host mode the page
 //! starts with an empty workbook instead of a sample, and the parent guards leaving the page.
@@ -62,6 +67,7 @@ enum NativeRequest {
 }
 
 struct PortState {
+    access: crate::host_access::AccessState,
     handshake: crate::port_handshake::Handshake,
     channel: Option<web_sys::MessagePort>,
 }
@@ -124,6 +130,7 @@ impl Bridge {
         let path = bridge.window.location().pathname().ok()?;
         let bundle = crate::port_handshake::bundle_from_path(&path)?.to_string();
         bridge.port = Some(Rc::new(RefCell::new(PortState {
+            access: crate::host_access::AccessState::default(),
             handshake: crate::port_handshake::Handshake::new(parent_origin.to_string(), bundle),
             channel: None,
         })));
@@ -170,7 +177,40 @@ impl Bridge {
                 return;
             }
         }
-        self.send(&[("type", "gridcraft:ready".into()), ("version", env!("CARGO_PKG_VERSION").into())]);
+        if let Some(state) = &self.port {
+            let read_only = state.borrow().access.read_only();
+            self.send(&[
+                ("type", "gridcraft:ready".into()),
+                ("version", env!("CARGO_PKG_VERSION").into()),
+                ("accessProtocol", 1.into()),
+                ("readOnly", read_only.into()),
+            ]);
+        } else {
+            self.send(&[("type", "gridcraft:ready".into()), ("version", env!("CARGO_PKG_VERSION").into())]);
+        }
+    }
+
+    /// Called before every input/logic/UI phase, never merely at request enqueue.
+    pub fn apply_access(&self, app: &mut SheetApp, ctx: &egui::Context) {
+        let request = self.port.as_ref().and_then(|state| state.borrow_mut().access.take());
+        if let Some(request) = request {
+            app.set_read_only(request.read_only);
+            if app.is_read_only() {
+                ctx.memory_mut(|memory| {
+                    if let Some(focused) = memory.focused() {
+                        memory.surrender_focus(focused);
+                    }
+                });
+            }
+            if let Some(state) = &self.port {
+                let reply = state.borrow_mut().access.applied(request, app.is_read_only());
+                self.send(&[
+                    ("type", "gridcraft:access".into()),
+                    ("requestId", reply.request_id.as_str().into()),
+                    ("readOnly", reply.read_only.into()),
+                ]);
+            }
+        }
     }
 
     pub fn post_failed(&self, error: &str) {
@@ -346,6 +386,21 @@ impl Bridge {
     fn receive(&self, data: &JsValue, inbox: &Inbox, ctx: &egui::Context) {
         let bridge = self;
         let kind = string(data, "type");
+        if kind.as_deref() == Some("gridcraft:set-access") {
+            let Some(state) = &self.port else { return };
+            let Some(id) = string(data, "requestId").filter(|id| !id.is_empty() && id.len() <= 128) else { return };
+            let read_only = js_sys::Reflect::get(data, &"readOnly".into()).ok().and_then(|value| value.as_bool());
+            let result = match read_only {
+                Some(value) => state.borrow_mut().access.request(id.clone(), value),
+                None => Err("Access readOnly must be a boolean.".into()),
+            };
+            if let Err(error) = result {
+                self.send(&[("type", "gridcraft:access".into()), ("requestId", id.as_str().into()), ("error", error.as_str().into())]);
+            } else {
+                ctx.request_repaint();
+            }
+            return;
+        }
         if kind.as_deref() == Some("gridcraft:save-ack") {
             if !bridge.managed || bridge.native.borrow().len() >= 8 {
                 return;

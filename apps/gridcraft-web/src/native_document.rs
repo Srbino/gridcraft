@@ -23,7 +23,7 @@ pub fn open(app: &mut SheetApp, name: &str, bytes: &[u8]) -> Result<Opened, Stri
     if crate::draft_state::dirty(app) || app.editor.is_some() || app.text_box_editor.is_some() {
         return Err("Save or discard unsaved work and finish native drafts before opening another workbook.".into());
     }
-    let result = app.run("file.open", json!({"name":name,"base64":gridcraft_engine::io::base64_encode(bytes)}))?;
+    let result = app.import_host_bytes(name, bytes)?;
     if let Some(warnings) = result.get("warnings").and_then(serde_json::Value::as_array)
         && !warnings.is_empty()
     {

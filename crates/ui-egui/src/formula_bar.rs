@@ -96,7 +96,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                     app.commit_edit(0, 0, false, false);
                 }
                 let fx = crate::widgets::icon_button(ui, Icon::Fx, t.text, "Insert Function", vec2(26.0, 24.0));
-                if fx.clicked() {
+                if fx.clicked() && !app.is_read_only() {
                     app.open_dialog("insertFunction", json!({}));
                 }
                 layout.buttons = cancel.rect.union(fx.rect);
@@ -110,7 +110,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
                 let id = egui::Id::unique("gridcraft.formula_bar");
                 // A spill child shows its anchor's formula muted and read-only.
-                let read_only = active_spill_anchor(app).is_some();
+                let read_only = app.is_read_only() || active_spill_anchor(app).is_some();
                 let info = if app.editor.is_some() {
                     editor_widget(app, &mut child, id, font.clone(), true, inner.width(), inner.height())
                 } else {
