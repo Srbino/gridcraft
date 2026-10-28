@@ -7,7 +7,18 @@ impl SheetApp {
         if !self.session.is_managed_document() {
             return true;
         }
-        if matches!(id, "app.checkForUpdates" | "help.checkForUpdates" | "dialog:agents" | "ui:agents" | "link.open") {
+        if matches!(
+            id,
+            "app.checkForUpdates"
+                | "help.checkForUpdates"
+                | "dialog:agents"
+                | "ui:agents"
+                | "link.open"
+                | "dialog:saveCopy"
+                | "ui:saveCopy"
+                | "data.scenarioManager"
+                | "data.dataTable"
+        ) {
             return false;
         }
         if id == "file.print" {
