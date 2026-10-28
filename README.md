@@ -190,6 +190,11 @@ Copy can use separately delegated clipboard-write without clipboard-read.
 Opaque managed frames also omit direct OS printing. File Print and Ctrl/Cmd+P
 keep the native preview and offer Create PDF through the parent download channel;
 exporting that printable copy never acknowledges a durable native save.
+Desktop update checks and desktop control-channel instructions are omitted in the
+managed UI. About keeps product information and credits without blocked external
+popup links. Repeated exports of the same immutable workbook keep up to 256 exact
+request aliases, so a later identical capture does not invalidate an in-flight
+save acknowledgement; a different workbook or revision replaces those aliases.
 
 Private-port hosts start read-only before the first interactive frame, including when the
 `readonly` query is missing or `0`; `readonly=1` explicitly documents that boot intent.

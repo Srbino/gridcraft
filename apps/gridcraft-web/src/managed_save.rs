@@ -1,5 +1,6 @@
 //! A managed host only acknowledges the exact native snapshot it durably stored.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use gridcraft_engine::model::Workbook;
@@ -8,13 +9,14 @@ use gridcraft_ui_egui::SheetApp;
 use crate::native_document::Snapshot;
 
 struct Pending {
-    request: String,
+    requests: VecDeque<String>,
     document: String,
     revision: String,
     workbook: Arc<Workbook>,
 }
 
-/// Retains only the latest exported baseline. Exporting and requesting a save
+/// Retains only the latest exported baseline, with bounded request aliases for
+/// repeated exports of that exact document/revision/workbook. Exporting and requesting a save
 /// never change `DocState::saved`; only a matching host acknowledgement does.
 #[derive(Default)]
 pub struct ManagedSaves {
@@ -27,8 +29,24 @@ impl ManagedSaves {
         if doc.uid.to_string() != snapshot.document || doc.revision.to_string() != snapshot.revision {
             return Err("The native snapshot no longer identifies the active document.".into());
         }
+        // A second capture of the identical immutable workbook can race an
+        // already durable save. Keep its original proof usable; a different
+        // workbook or revision still replaces the pending baseline entirely.
+        if let Some(pending) = &mut self.pending
+            && pending.document == snapshot.document
+            && pending.revision == revision
+            && Arc::ptr_eq(&pending.workbook, &doc.wb)
+        {
+            if !pending.requests.iter().any(|id| id == request) {
+                pending.requests.push_back(request.to_string());
+                if pending.requests.len() > 256 {
+                    pending.requests.pop_front();
+                }
+            }
+            return Ok(());
+        }
         self.pending = Some(Pending {
-            request: request.to_string(),
+            requests: VecDeque::from([request.to_string()]),
             document: snapshot.document.clone(),
             revision: revision.to_string(),
             workbook: doc.wb.clone(),
@@ -38,7 +56,7 @@ impl ManagedSaves {
 
     pub fn acknowledge(&mut self, app: &mut SheetApp, request: &str, document: &str, revision: &str) -> bool {
         let Some(pending) = &self.pending else { return false };
-        if pending.request != request
+        if !pending.requests.iter().any(|id| id == request)
             || pending.document != document
             || pending.revision != revision
             || app.session.active().is_none_or(|doc| doc.uid.to_string() != document)
@@ -81,6 +99,57 @@ mod tests {
         let second = crate::native_document::export(&mut app).unwrap();
         saves.remember("request-2", &second, &app, &second.revision).unwrap();
         assert!(saves.acknowledge(&mut app, "request-2", &second.document, &second.revision));
+        assert!(!app.session.active().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn repeated_identical_snapshot_does_not_invalidate_an_inflight_exact_save_ack() {
+        let mut app = app();
+        let mut saves = super::ManagedSaves::default();
+        let first = crate::native_document::export(&mut app).unwrap();
+        saves.remember("durable-save", &first, &app, &first.revision).unwrap();
+        let repeated = crate::native_document::export(&mut app).unwrap();
+        assert_eq!(repeated.bytes, first.bytes);
+        assert_eq!(repeated.revision, first.revision);
+        saves.remember("later-capture", &repeated, &app, &repeated.revision).unwrap();
+        assert!(saves.acknowledge(&mut app, "durable-save", &first.document, &first.revision));
+        assert!(!app.session.active().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn identical_export_aliases_never_clean_later_edits_or_accept_foreign_identity() {
+        let mut app = app();
+        let mut saves = super::ManagedSaves::default();
+        let first = crate::native_document::export(&mut app).unwrap();
+        saves.remember("first", &first, &app, &first.revision).unwrap();
+        saves.remember("identical", &first, &app, &first.revision).unwrap();
+        for (id, document, revision) in [
+            ("foreign", first.document.as_str(), first.revision.as_str()),
+            ("first", "foreign", first.revision.as_str()),
+            ("first", first.document.as_str(), "foreign"),
+            ("", first.document.as_str(), first.revision.as_str()),
+        ] {
+            assert!(!saves.acknowledge(&mut app, id, document, revision));
+            assert!(app.session.active().unwrap().is_dirty());
+        }
+        app.run("cell.set", json!({"cell":"A1", "input":"later edit"})).unwrap();
+        assert!(saves.acknowledge(&mut app, "first", &first.document, &first.revision));
+        assert!(app.session.active().unwrap().is_dirty(), "an exact older baseline never cleans later edits");
+        assert!(!saves.acknowledge(&mut app, "identical", &first.document, &first.revision), "aliases are consumed together");
+    }
+
+    #[test]
+    fn identical_export_request_aliases_are_bounded_and_expire_closed() {
+        let mut app = app();
+        let mut saves = super::ManagedSaves::default();
+        let snapshot = crate::native_document::export(&mut app).unwrap();
+        for n in 0..300 {
+            saves.remember(&format!("capture-{n}"), &snapshot, &app, &snapshot.revision).unwrap();
+        }
+        assert_eq!(saves.pending.as_ref().unwrap().requests.len(), 256);
+        assert!(!saves.acknowledge(&mut app, "capture-0", &snapshot.document, &snapshot.revision));
+        assert!(app.session.active().unwrap().is_dirty());
+        assert!(saves.acknowledge(&mut app, "capture-299", &snapshot.document, &snapshot.revision));
         assert!(!app.session.active().unwrap().is_dirty());
     }
 

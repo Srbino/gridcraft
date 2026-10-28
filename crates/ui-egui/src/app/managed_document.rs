@@ -7,6 +7,9 @@ impl SheetApp {
         if !self.session.is_managed_document() {
             return true;
         }
+        if matches!(id, "app.checkForUpdates" | "help.checkForUpdates" | "dialog:agents" | "ui:agents") {
+            return false;
+        }
         if id == "file.print" {
             return self.services.print_native.is_some() || self.services.print.is_some();
         }

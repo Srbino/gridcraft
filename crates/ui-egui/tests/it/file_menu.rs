@@ -687,3 +687,39 @@ fn managed_ctrl_p_opens_print_preview_instead_of_calling_missing_os_print() {
     assert_eq!(page(&h), Some("print"));
     assert!(h.state().message.is_none());
 }
+
+#[test]
+fn managed_automate_hides_host_unavailable_update_and_desktop_agent_help() {
+    let mut h = harness(Services::default());
+    h.state_mut().ui.ribbon_tab = "Automate".into();
+    h.run_steps(3);
+    let painted = |h: &egui_kittest::Harness<'static, SheetApp>, label: &str| {
+        h.output().shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label))
+    };
+    for label in ["Check for", "Agent"] {
+        assert!(painted(&h, label), "standalone calibration: {label}");
+    }
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    for label in ["Check for", "Agent"] {
+        assert!(!painted(&h, label), "managed host cannot provide {label}");
+    }
+    for label in ["Command", "Action", "About"] {
+        assert!(painted(&h, label), "real UI remains available: {label}");
+    }
+}
+
+#[test]
+fn managed_about_keeps_information_without_unusable_external_links() {
+    let mut h = harness(Services { open_url: Some(Box::new(|_| {})), ..Default::default() });
+    h.state_mut().open_dialog("about", serde_json::json!({}));
+    h.run_steps(3);
+    let label = "getartcraft.com/apps/gridcraft";
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::Link, label).is_some(), "standalone link calibration");
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.run_steps(3);
+    assert!(h.query_by_role_and_label(egui::accesskit::Role::Link, label).is_none(), "opaque host has no external URL capability");
+    assert!(h.query_by_label("GridCraft").is_some(), "product information remains");
+    assert!(h.query_by_label("Contributors").is_some());
+    assert!(h.query_by_label("Models").is_some());
+}
