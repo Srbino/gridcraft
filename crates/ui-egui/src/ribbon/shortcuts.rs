@@ -19,7 +19,11 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
         Key::N => Some(("file.new", json!({}))),
         Key::W => Some(("file.close", json!({}))),
         Key::P => {
-            app.print_now(json!({}));
+            if app.session.is_managed_document() && !app.show_command("file.print") {
+                app.open_backstage(crate::backstage::Page::Print);
+            } else {
+                app.print_now(json!({}));
+            }
             None
         }
         Key::K => {

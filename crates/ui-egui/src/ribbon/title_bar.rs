@@ -119,7 +119,7 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                         app.run_or_alert(id, json!({}));
                     }
                 }
-                if ui.button("Print…").clicked() {
+                if app.show_command("file.print") && ui.button("Print…").clicked() {
                     app.print_now(json!({}));
                 }
             });

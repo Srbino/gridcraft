@@ -97,7 +97,7 @@ impl SheetApp {
     pub fn run_or_alert(&mut self, id: &str, params: Json) {
         // A menu/shortcut opens the settings first; the Print page's button submits explicitly.
         if id == "file.print" {
-            if self.services.print_native.is_some() {
+            if self.services.print_native.is_some() || self.session.is_managed_document() && self.services.print.is_none() {
                 self.open_backstage(backstage::Page::Print);
                 return;
             }

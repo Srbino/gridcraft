@@ -1248,3 +1248,55 @@ fn managed_lifecycle_hides_new_workbook_from_the_actual_title_more_popup() {
     assert!(h.query_by_label("Open…").is_some(), "managed popup really opened");
     assert!(h.query_by_label("New Workbook").is_none());
 }
+
+#[test]
+fn coalesced_initial_text_events_are_all_retained_in_the_native_cell_draft() {
+    let mut h = harness(blank());
+    h.input_mut().events.extend([Event::Text("c".into()), Event::Text("a".into()), Event::Text("l".into())]);
+    h.run_steps(2);
+    assert_eq!(h.state().cell_draft().unwrap().text, "cal");
+    text(&mut h, "ibrationA1_1");
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert_eq!(value(&h, "A1"), Value::from("calibrationA1_1"));
+}
+
+#[test]
+fn coalesced_initial_text_with_physical_keys_and_enter_replaces_existing_content() {
+    let mut h = harness(blank());
+    h.state_mut().run("cell.set", json!({"cell":"A1","input":"previous content"})).unwrap();
+    h.run_steps(2);
+    for (key_code, text) in [(Key::C, "c"), (Key::A, "a"), (Key::L, "l")] {
+        h.input_mut().events.extend([
+            Event::Key { key: key_code, physical_key: Some(key_code), pressed: true, repeat: false, modifiers: Modifiers::NONE },
+            Event::Text(text.into()),
+            Event::Key { key: key_code, physical_key: Some(key_code), pressed: false, repeat: false, modifiers: Modifiers::NONE },
+        ]);
+    }
+    h.input_mut().events.extend([
+        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+        Event::Key { key: Key::Enter, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+    ]);
+    h.run_steps(2);
+    assert_eq!(value(&h, "A1"), Value::from("cal"));
+    assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(1, 0));
+}
+
+#[test]
+fn coalesced_initial_text_keeps_following_tab_arrow_and_escape_semantics() {
+    for (control, commits) in [(Key::Tab, true), (Key::ArrowRight, true), (Key::Escape, false)] {
+        let mut h = harness(blank());
+        h.state_mut().run("cell.set", json!({"cell":"A1","input":"before"})).unwrap();
+        h.run_steps(2);
+        h.input_mut().events.extend([
+            Event::Text("c".into()),
+            Event::Text("a".into()),
+            Event::Text("l".into()),
+            Event::Key { key: control, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+            Event::Key { key: control, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE },
+        ]);
+        h.run_steps(2);
+        assert_eq!(value(&h, "A1"), Value::from(if commits { "cal" } else { "before" }), "{control:?}");
+        assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(0, if commits { 1 } else { 0 }), "{control:?}");
+        assert!(h.state().cell_draft().is_none(), "{control:?}");
+    }
+}

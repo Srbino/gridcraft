@@ -7,6 +7,9 @@ impl SheetApp {
         if !self.session.is_managed_document() {
             return true;
         }
+        if id == "file.print" {
+            return self.services.print_native.is_some() || self.services.print.is_some();
+        }
         if matches!(id, "file.new" | "file.close" | "window.close" | "view.newWindow") {
             return false;
         }

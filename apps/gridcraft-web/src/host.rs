@@ -143,6 +143,11 @@ impl Bridge {
     /// Send saved and exported files to the parent instead of downloading them, and hear files
     /// from it.
     pub fn connect(&self, services: &mut Services, inbox: Inbox, ctx: egui::Context) {
+        if self.managed && self.port.is_some() {
+            // The opaque editor cannot load a nested blob/PDF frame. Its
+            // printable copy uses the existing parent-owned download channel.
+            services.print = None;
+        }
         if self.port.is_some() {
             self.listen_port(inbox, ctx);
         } else {

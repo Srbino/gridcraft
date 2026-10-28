@@ -647,3 +647,43 @@ fn control_requests_route_to_a_window_and_list_windows() {
     let r = call(&mut h, "engine.execute", serde_json::json!({"command": "cell.get", "params": {"cell": "A1"}, "window": 999}));
     assert_eq!(r["ok"], false, "{r}");
 }
+
+#[test]
+fn managed_print_preview_uses_a_pdf_copy_when_no_native_print_service_exists() {
+    let downloads = Arc::new(Mutex::new(Vec::<(String, Vec<u8>)>::new()));
+    let copy = downloads.clone();
+    let mut h = harness(Services {
+        download: Some(Box::new(move |name, bytes| copy.lock().unwrap().push((name.into(), bytes.to_vec())))),
+        ..Default::default()
+    });
+    h.state_mut().run("cell.set", serde_json::json!({"cell":"A1","input":"print copy"})).unwrap();
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    let baseline = h.state().session.active().unwrap().saved.clone();
+    h.state_mut().open_backstage(gridcraft_ui_egui::backstage::Page::Print);
+    h.run_steps(3);
+    assert!(h.query_by_label("Create PDF").is_some(), "unsupported OS print is replaced by an actionable PDF copy");
+    h.get_by_label("Create PDF").click();
+    h.run_steps(3);
+    let files = downloads.lock().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].0.ends_with(".pdf"));
+    assert!(files[0].1.starts_with(b"%PDF-"));
+    assert!(Arc::ptr_eq(&h.state().session.active().unwrap().saved, &baseline));
+    assert!(h.state().session.active().unwrap().is_dirty());
+}
+
+#[test]
+fn managed_ctrl_p_opens_print_preview_instead_of_calling_missing_os_print() {
+    let mut h = harness(Services::default());
+    h.state_mut().set_managed_document_save(Some(Box::new(|| Ok(()))));
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::P,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    h.run_steps(3);
+    assert_eq!(page(&h), Some("print"));
+    assert!(h.state().message.is_none());
+}

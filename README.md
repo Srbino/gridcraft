@@ -187,6 +187,9 @@ Managed hosts without a clipboard-read service omit toolbar and context-menu
 Paste actions, which could otherwise paste stale internal data after the OS
 clipboard changes. User-triggered Ctrl/Cmd+V paste events remain supported;
 Copy can use separately delegated clipboard-write without clipboard-read.
+Opaque managed frames also omit direct OS printing. File Print and Ctrl/Cmd+P
+keep the native preview and offer Create PDF through the parent download channel;
+exporting that printable copy never acknowledges a durable native save.
 
 Private-port hosts start read-only before the first interactive frame, including when the
 `readonly` query is missing or `0`; `readonly=1` explicitly documents that boot intent.
