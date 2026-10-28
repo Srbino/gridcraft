@@ -33,11 +33,6 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
         m.set_focus_lock_filter(resp.id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
     });
     let events = ctx.input(|i| i.events.clone());
-    // A shortcut key that also types a character (Shift+Space sends Text(" ")) must not start an edit.
-    let shortcut_pressed = events.iter().any(|e| {
-        matches!(e, egui::Event::Key { pressed: true, modifiers: m, key, .. }
-            if !m.alt && (m.ctrl || m.command || (m.shift && *key == egui::Key::Space)))
-    });
     let page = ((geo.cells.height() / geo.z) / sh.default_row_height).floor().max(1.0) as i64;
     // Alt shortcuts type their character too on Windows and Linux (Alt+= sends Text("=")): once
     // a shortcut ran, that text must not start an edit over what it just did.
@@ -59,7 +54,7 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             // PRIMARY middle-click paste belongs to egui's TextEdit; the grid has no caret to
             // insert text at, so a middle click on a cell is deliberately not a paste.
             egui::Event::MiddleClickPaste { .. } => {}
-            egui::Event::Text(_) if shortcut_pressed || shortcut_ran => {}
+            egui::Event::Text(_) if shortcut_ran => {}
             egui::Event::Text(text) if text.chars().all(|c| !c.is_control()) && !text.is_empty() => {
                 // A slow frame can contain several character events before the
                 // new TextEdit has focus. Seed the complete text burst once and
@@ -76,6 +71,11 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                 if crate::keymap::dispatch(app, ctx, key, physical_key, m, geo, sh) {
                     shortcut_ran = true;
                     continue;
+                }
+                // Only a shortcut already reached in event order can own following
+                // text. A later Ctrl+S must not discard earlier typed content.
+                if !m.alt && (m.ctrl || m.command || (m.shift && key == Key::Space)) {
+                    shortcut_ran = true;
                 }
                 let cmd = m.command;
                 let shift = m.shift;

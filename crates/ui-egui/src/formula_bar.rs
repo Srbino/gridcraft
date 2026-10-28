@@ -311,6 +311,21 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
     let mut action: Option<(i64, i64, bool, bool)> = None;
     let mut arrow = false;
     let mut cancel = false;
+    // Consume Save here, but run it only after TextEdit has received this
+    // frame's text and the draft is back in the app for settle_drafts.
+    let save = if has_focus && mine && app.message.is_none() && app.dialog.is_none() {
+        ui.input_mut(|i| {
+            if i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::S) {
+                Some("file.saveAs")
+            } else if i.consume_key(egui::Modifiers::COMMAND, Key::S) {
+                Some("file.save")
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
     // A message box over the editor (a data validation alert, a formula error) gets Enter and Esc;
     // the editor used to take them, so the first Esc cancelled the edit behind the message.
     // So does a dialog opened from the editor (Paste Name): its OK takes Enter.
@@ -638,6 +653,9 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         } else {
             app.commit_edit(dr, dc, array, fill);
         }
+    }
+    if let Some(command) = save {
+        app.run_or_alert(command, json!({}));
     }
     EditorInfo { lines, caret }
 }

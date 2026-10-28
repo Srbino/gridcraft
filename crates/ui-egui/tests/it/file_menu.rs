@@ -773,3 +773,115 @@ fn managed_file_info_does_not_infer_unsaved_state_from_absent_desktop_path() {
     assert!(h.query_by_label("Properties").is_some());
     assert!(h.query_by_label("Title").is_some());
 }
+
+#[test]
+fn managed_raw_text_before_save_shortcut_keeps_all_typed_content() {
+    for warm in [false, true] {
+        for split in [false, true] {
+            let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let capture = requested.clone();
+            let mut h = harness(Services::default());
+            h.state_mut().set_managed_document_save(Some(Box::new(move || {
+                capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })));
+            let baseline = h.state().session.active().unwrap().saved.clone();
+            if warm {
+                h.input_mut().events.push(egui::Event::Text("P".into()));
+                h.run_steps(2);
+                assert_eq!(h.state().cell_draft().unwrap().text, "P");
+            }
+            let tail = if warm { "REFIX" } else { "PREFIX" };
+            if split {
+                h.input_mut().events.extend(tail.chars().map(|ch| egui::Event::Text(ch.to_string())));
+            } else {
+                h.input_mut().events.push(egui::Event::Text(tail.into()));
+            }
+            h.input_mut().events.extend([
+                egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: Some(egui::Key::S),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+            ]);
+            h.run_steps(2);
+            let doc = h.state().session.active().unwrap();
+            assert_eq!(
+                doc.wb.active().unwrap().value(CellRef::new(0, 0)),
+                Value::text("PREFIX"),
+                "warm={warm}, split={split}, requests={}, draft={:?}",
+                requested.load(std::sync::atomic::Ordering::SeqCst),
+                h.state().cell_draft()
+            );
+            assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(h.state().cell_draft().is_none());
+            assert!(Arc::ptr_eq(&baseline, &doc.saved), "request is not a durable ACK");
+        }
+    }
+}
+
+#[test]
+fn managed_raw_save_shortcut_preserves_refused_and_readonly_drafts() {
+    for readonly in [false, true] {
+        let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let capture = requested.clone();
+        let mut h = harness(Services::default());
+        h.state_mut().set_managed_document_save(Some(Box::new(move || {
+            capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })));
+        let text = if readonly { "retained readonly draft" } else { "=1+" };
+        h.state_mut().begin_edit(Some(text.into()), false);
+        h.run_steps(2);
+        if readonly {
+            h.state_mut().set_read_only(true);
+        }
+        let before = h.state().session.active().unwrap().wb.clone();
+        let saved = h.state().session.active().unwrap().saved.clone();
+        h.input_mut().events.extend([
+            egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+            egui::Event::Key {
+                key: egui::Key::S,
+                physical_key: Some(egui::Key::S),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+        ]);
+        h.run_steps(2);
+        assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), 0, "readonly={readonly}");
+        assert_eq!(h.state().cell_draft().unwrap().text, text);
+        assert!(Arc::ptr_eq(&before, &h.state().session.active().unwrap().wb));
+        assert!(Arc::ptr_eq(&saved, &h.state().session.active().unwrap().saved));
+        assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(0, 0));
+        assert!(h.state().message.is_some());
+    }
+}
+
+#[test]
+fn managed_raw_shortcuts_do_not_insert_their_following_text() {
+    for (key, modifiers, text) in [(egui::Key::S, egui::Modifiers::COMMAND, "s"), (egui::Key::Space, egui::Modifiers::SHIFT, " ")] {
+        let requested = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let capture = requested.clone();
+        let mut h = harness(Services::default());
+        h.state_mut().set_managed_document_save(Some(Box::new(move || {
+            capture.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })));
+        h.input_mut().events.extend([
+            egui::Event::ModifiersChanged(modifiers),
+            egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers },
+            egui::Event::Text(text.into()),
+        ]);
+        h.run_steps(2);
+        assert!(h.state().cell_draft().is_none(), "{key:?}");
+        assert_eq!(h.state().session.active().unwrap().wb.active().unwrap().value(CellRef::new(0, 0)), Value::Empty);
+        assert_eq!(requested.load(std::sync::atomic::Ordering::SeqCst), usize::from(key == egui::Key::S));
+        if key == egui::Key::Space {
+            assert!(h.state().session.active().unwrap().selection.current().is_full_rows());
+        }
+    }
+}

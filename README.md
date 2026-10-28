@@ -152,10 +152,12 @@ store a document or turn the ordinary XLSX Save action into a durable acknowledg
 
 Hosts that durably store native snapshots can opt into `?host=parent&save=managed`.
 Workbook Save (including Ctrl+S) then sends `gridcraft:save-request` (`document`, `revision`)
-and leaves unsaved changes intact. Export a native snapshot using a fresh `requestId` unique
+after applying pending cell text, and leaves unsaved changes intact. A refused draft blocks
+the request. Export a native snapshot using a fresh `requestId` unique
 across frame reloads. After storing it durably, send `gridcraft:save-ack` with that exact
 `requestId`, `document`, and `revision` from `gridcraft:native-exported`. Only the latest
-export can be acknowledged. A matching acknowledgement records the exported workbook as the
+snapshot can be acknowledged; repeated exports of that identical document/revision/workbook
+share a bounded group of request IDs. A matching acknowledgement records the exported workbook as the
 saved baseline; edits made after that export remain unsaved. Old or foreign acknowledgements
 are ignored. Without `save=managed`, ordinary XLSX Save behavior remains unchanged.
 
